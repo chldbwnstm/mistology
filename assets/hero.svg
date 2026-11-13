@@ -1,0 +1,98 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 310" width="960" height="310" role="img" aria-label="MISTOLOGY — Project-Local Mistake Ontology for Coding Agents">
+  <defs>
+    <linearGradient id="bg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090D16"/>
+      <stop offset="55%" stop-color="#0F172A"/>
+      <stop offset="100%" stop-color="#131C31"/>
+    </linearGradient>
+    <linearGradient id="topGlow" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#38BDF8" stop-opacity="0.0"/>
+      <stop offset="30%" stop-color="#38BDF8" stop-opacity="0.85"/>
+      <stop offset="70%" stop-color="#A78BFA" stop-opacity="0.85"/>
+      <stop offset="100%" stop-color="#34D399" stop-opacity="0.0"/>
+    </linearGradient>
+    <linearGradient id="iconBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#112239"/>
+      <stop offset="100%" stop-color="#1B1838"/>
+    </linearGradient>
+    <pattern id="grid" width="24" height="24" patternUnits="userSpaceOnUse">
+      <circle cx="2" cy="2" r="1" fill="#334155" fill-opacity="0.32"/>
+    </pattern>
+  </defs>
+
+  <!-- Outer Card -->
+  <rect x="1" y="1" width="958" height="308" rx="16" fill="url(#bg)" stroke="#1E293B" stroke-width="1.5"/>
+  <rect x="2" y="2" width="956" height="306" rx="15" fill="url(#grid)"/>
+  <rect x="80" y="1" width="800" height="2" fill="url(#topGlow)"/>
+
+  <!-- Brand Icon (Ontology Graph Mark) -->
+  <g transform="translate(42, 42)">
+    <rect x="0" y="0" width="54" height="54" rx="14" fill="url(#iconBg)" stroke="#38BDF8" stroke-opacity="0.45" stroke-width="1.2"/>
+    <line x1="16" y1="37" x2="29" y2="16" stroke="#38BDF8" stroke-width="2" stroke-opacity="0.8"/>
+    <line x1="29" y1="16" x2="40" y2="36" stroke="#A78BFA" stroke-width="2" stroke-opacity="0.85"/>
+    <line x1="16" y1="37" x2="40" y2="36" stroke="#34D399" stroke-width="1.6" stroke-dasharray="3 2.5" stroke-opacity="0.8"/>
+    <circle cx="16" cy="37" r="5" fill="#38BDF8"/>
+    <circle cx="29" cy="16" r="5" fill="#A78BFA"/>
+    <circle cx="40" cy="36" r="5" fill="#34D399"/>
+  </g>
+
+  <!-- Eyebrow & Wordmark -->
+  <text x="110" y="57" fill="#38BDF8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" letter-spacing="1.6">PROJECT-LOCAL MISTAKE ONTOLOGY</text>
+  <text x="108" y="92" fill="#F8FAFC" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="35" font-weight="800" letter-spacing="-0.8">MISTOLOGY</text>
+
+  <!-- Headline -->
+  <text x="42" y="138" fill="#E2E8F0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18.5" font-weight="600">Turn agent mistakes into a connected,</text>
+  <text x="42" y="164" fill="#38BDF8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="18.5" font-weight="700">zero-poison 2-hop memory graph.</text>
+
+  <!-- Subtitle -->
+  <text x="42" y="198" fill="#94A3B8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.3">Skip 3,000-line MISTAKES.md files and bloated session logs.</text>
+  <text x="42" y="218" fill="#94A3B8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12.3">1-call preflight: verified fixes + 1/2-hop coupled hazards in 4 ms.</text>
+
+  <!-- Feature Pills -->
+  <g transform="translate(42, 242)">
+    <rect x="0" y="0" width="118" height="28" rx="14" fill="#0C2438" stroke="#0284C7" stroke-opacity="0.7" stroke-width="1"/>
+    <text x="59" y="18" text-anchor="middle" fill="#7DD3FC" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" font-weight="600">Rust + FTS5</text>
+
+    <rect x="128" y="0" width="136" height="28" rx="14" fill="#1D1836" stroke="#7C3AED" stroke-opacity="0.7" stroke-width="1"/>
+    <text x="196" y="18" text-anchor="middle" fill="#C4B5FD" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" font-weight="600">2-Hop Coupling</text>
+
+    <rect x="274" y="0" width="132" height="28" rx="14" fill="#0A2922" stroke="#059669" stroke-opacity="0.7" stroke-width="1"/>
+    <text x="340" y="18" text-anchor="middle" fill="#6EE7B7" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="11.5" font-weight="600">-98.9% Tokens</text>
+  </g>
+
+  <!-- Right Terminal Window Preview -->
+  <g transform="translate(472, 22)">
+    <rect x="0" y="0" width="452" height="266" rx="12" fill="#070B14" stroke="#1E293B" stroke-width="1.2"/>
+    <path d="M0 12 Q0 0 12 0 L440 0 Q452 0 452 12 L452 28 L0 28 Z" fill="#0E1628"/>
+    <line x1="0" y1="28" x2="452" y2="28" stroke="#1E293B" stroke-width="1"/>
+    <circle cx="16" cy="14" r="4.5" fill="#EF4444" fill-opacity="0.85"/>
+    <circle cx="30" cy="14" r="4.5" fill="#F59E0B" fill-opacity="0.85"/>
+    <circle cx="44" cy="14" r="4.5" fill="#10B981" fill-opacity="0.85"/>
+    <text x="226" y="18" text-anchor="middle" fill="#64748B" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5">mistology search -b — 2-hop preflight</text>
+
+    <!-- CLI Command -->
+    <text x="14" y="47" fill="#34D399" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="700">$</text>
+    <text x="26" y="47" fill="#F1F5F9" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5">mistology search -b &quot;VND KWD services/fx/currency.py&quot;</text>
+
+    <!-- Brief 1: Direct Hit -->
+    <rect x="14" y="57" width="424" height="56" rx="7" fill="#0D182C" stroke="#0284C7" stroke-opacity="0.55" stroke-width="1"/>
+    <text x="22" y="73" fill="#38BDF8" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.6" font-weight="700">[2026-11-11-001 v3] services/fx/currency.py → [settlement.py]</text>
+    <text x="22" y="89" fill="#CBD5E1" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.5">- 정답: Register exponent in CURRENCY_EXPONENTS (0 vs 3 dec)</text>
+    <text x="22" y="104" fill="#FCA5A5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.2">- 피할 오답: v1: code in (&quot;KRW&quot;,&quot;JPY&quot;) | v2: hardcoded BHD</text>
+
+    <!-- Brief 2: 1-Hop Coupled Hit -->
+    <rect x="14" y="119" width="424" height="56" rx="7" fill="#14122B" stroke="#8B5CF6" stroke-opacity="0.65" stroke-width="1"/>
+    <text x="22" y="135" fill="#C4B5FD" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.5" font-weight="700">[2026-11-11-002 v2 ← currency.py] settlement.py → [csv_export.py]</text>
+    <text x="22" y="151" fill="#CBD5E1" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.5">- 정답: Sync LEDGER_MINOR_DIVISORS[code] in the same PR</text>
+    <text x="22" y="166" fill="#FCA5A5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.2">- 피할 오답: v1: default divisor 100 (100x VND underpayment)</text>
+
+    <!-- Brief 3: 2-Hop Coupled Hit -->
+    <rect x="14" y="181" width="424" height="56" rx="7" fill="#09221E" stroke="#10B981" stroke-opacity="0.6" stroke-width="1"/>
+    <text x="22" y="197" fill="#6EE7B7" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.5" font-weight="700">[2026-11-11-003 v2 ← settlement.py] reporting/csv_export.py</text>
+    <text x="22" y="213" fill="#CBD5E1" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.5">- 정답: Sync REPORT_DECIMALS[code] for 0/3-decimal CSV rows</text>
+    <text x="22" y="228" fill="#FCA5A5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.2">- 피할 오답: v1: default Decimal(&quot;0.01&quot;) quantize on KWD/VND</text>
+
+    <!-- Footer Latency Line -->
+    <text x="16" y="254" fill="#64748B" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.8">3 coupled hazards in 1 call (4.0 ms)  •  320 tok (vs 29,183 .md)</text>
+  </g>
+</svg>

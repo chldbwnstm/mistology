@@ -1,0 +1,112 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 398" width="960" height="398" role="img" aria-label="MISTOLOGY Empirical Benchmarks — 100% Clean Recall, 320 Prompt Tokens, 4.0ms CLI, 4.2x-14.5x Live Agent Memory Savings vs Top Open-Source Competitors">
+  <defs>
+    <linearGradient id="bBg" x1="0%" y1="0%" x2="100%" y2="100%">
+      <stop offset="0%" stop-color="#090D16"/>
+      <stop offset="100%" stop-color="#0F172A"/>
+    </linearGradient>
+    <linearGradient id="barMist" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#10B981"/>
+      <stop offset="100%" stop-color="#38BDF8"/>
+    </linearGradient>
+    <linearGradient id="barComp" x1="0%" y1="0%" x2="100%" y2="0%">
+      <stop offset="0%" stop-color="#EF4444" stop-opacity="0.88"/>
+      <stop offset="100%" stop-color="#F59E0B" stop-opacity="0.82"/>
+    </linearGradient>
+  </defs>
+
+  <!-- Outer Container -->
+  <rect x="1" y="1" width="958" height="396" rx="16" fill="url(#bBg)" stroke="#1E293B" stroke-width="1.5"/>
+
+  <!-- Section Eyebrow -->
+  <text x="34" y="34" fill="#94A3B8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11" font-weight="700" letter-spacing="1.3">AT A GLANCE  •  4-WAY OPEN-SOURCE MEMORY BENCHMARK (400 SESSIONS · 50-MODULE LIVE REPO)</text>
+
+  <!-- KPI Card 1: Clean Recall -->
+  <g transform="translate(34, 50)">
+    <rect x="0" y="0" width="214" height="116" rx="12" fill="#0D1627" stroke="#1E293B" stroke-width="1.2"/>
+    <rect x="16" y="0" width="56" height="2.5" fill="#34D399"/>
+    <text x="18" y="26" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" letter-spacing="0.9">CLEAN RECALL (27 CORE)</text>
+    <text x="18" y="66" fill="#34D399" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="34" font-weight="800" letter-spacing="-0.8">100%</text>
+    <text x="18" y="88" fill="#E2E8F0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="600">27/27 hits  •  0 poisoned</text>
+    <text x="18" y="104" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5">9.0x – 13.5x vs OSS memory</text>
+  </g>
+
+  <!-- KPI Card 2: Prompt Tokens -->
+  <g transform="translate(260, 50)">
+    <rect x="0" y="0" width="214" height="116" rx="12" fill="#0D1627" stroke="#1E293B" stroke-width="1.2"/>
+    <rect x="16" y="0" width="56" height="2.5" fill="#38BDF8"/>
+    <text x="18" y="26" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" letter-spacing="0.9">PREFLIGHT TOKENS</text>
+    <text x="18" y="66" fill="#38BDF8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="34" font-weight="800" letter-spacing="-0.8">320 tok</text>
+    <text x="18" y="88" fill="#E2E8F0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="600">-98.9% vs MISTAKES.md</text>
+    <text x="18" y="104" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5">3.2x – 35.9x lighter vs OSS</text>
+  </g>
+
+  <!-- KPI Card 3: CLI Speed -->
+  <g transform="translate(486, 50)">
+    <rect x="0" y="0" width="214" height="116" rx="12" fill="#0D1627" stroke="#1E293B" stroke-width="1.2"/>
+    <rect x="16" y="0" width="56" height="2.5" fill="#A78BFA"/>
+    <text x="18" y="26" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" letter-spacing="0.9">CLI SEARCH SPEED</text>
+    <text x="18" y="66" fill="#C4B5FD" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="34" font-weight="800" letter-spacing="-0.8">4.0 ms</text>
+    <text x="18" y="88" fill="#E2E8F0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="600">1-call 2-hop  •  3.1 ms card</text>
+    <text x="18" y="104" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5">16.3x – 296.9x faster CLI</text>
+  </g>
+
+  <!-- KPI Card 4: Live Agent Memory -->
+  <g transform="translate(712, 50)">
+    <rect x="0" y="0" width="214" height="116" rx="12" fill="#0D1627" stroke="#1E293B" stroke-width="1.2"/>
+    <rect x="16" y="0" width="56" height="2.5" fill="#FBBF24"/>
+    <text x="18" y="26" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5" font-weight="700" letter-spacing="0.9">LIVE AGENT MEMORY</text>
+    <text x="18" y="66" fill="#FCD34D" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="34" font-weight="800" letter-spacing="-0.8">14.5x</text>
+    <text x="18" y="88" fill="#E2E8F0" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="11.5" font-weight="600">2.1k vs 8.7k–30.1k tokens</text>
+    <text x="18" y="104" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.5">100% E2E  •  72/72 Rust tests</text>
+  </g>
+
+  <!-- Bottom 4-Way Comparison Bento Panel -->
+  <g transform="translate(34, 182)">
+    <rect x="0" y="0" width="892" height="196" rx="12" fill="#0B1322" stroke="#1E293B" stroke-width="1.2"/>
+    <text x="22" y="27" fill="#F1F5F9" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700">HEAD-TO-HEAD VS TOP OPEN-SOURCE MEMORY  —  3-Month Scale (400 Sessions) &amp; Live 50-Module Blind Agent</text>
+
+    <!-- Column Headers -->
+    <text x="434" y="42" fill="#64748B" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.5" font-weight="700">CLEAN RECALL</text>
+    <text x="614" y="42" fill="#64748B" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.5" font-weight="700">AVG TOK</text>
+    <text x="706" y="42" fill="#64748B" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.5" font-weight="700">CLI</text>
+    <text x="782" y="42" fill="#64748B" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.5" font-weight="700">LIVE MEM</text>
+
+    <!-- Row 1: MISTOLOGY -->
+    <text x="22" y="65" fill="#F8FAFC" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="700">MISTOLOGY (-b)</text>
+    <rect x="152" y="50" width="264" height="20" rx="5" fill="#131E33"/>
+    <rect x="152" y="50" width="264" height="20" rx="5" fill="url(#barMist)"/>
+    <text x="434" y="64" fill="#6EE7B7" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.8" font-weight="700">100% (0 poison)</text>
+    <text x="614" y="64" fill="#6EE7B7" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.8" font-weight="700">320 tok</text>
+    <text x="706" y="64" fill="#6EE7B7" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.8" font-weight="700">4.0 ms</text>
+    <text x="782" y="64" fill="#6EE7B7" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.8" font-weight="700">2.1k tok</text>
+
+    <!-- Row 2: Beads v1.3.4 -->
+    <text x="22" y="96" fill="#94A3B8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">Beads v1.3.4</text>
+    <rect x="152" y="81" width="264" height="20" rx="5" fill="#131E33"/>
+    <rect x="152" y="81" width="30" height="20" rx="5" fill="url(#barComp)"/>
+    <text x="434" y="95" fill="#CBD5E1" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.8">11% (16 poison)</text>
+    <text x="614" y="95" fill="#CBD5E1" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.8">1,039 tok</text>
+    <text x="706" y="95" fill="#CBD5E1" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.8">1,197 ms</text>
+    <text x="782" y="95" fill="#CBD5E1" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.8">8.7k (4.2x)</text>
+
+    <!-- Row 3: claude-mem -->
+    <text x="22" y="127" fill="#94A3B8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">claude-mem</text>
+    <rect x="152" y="112" width="264" height="20" rx="5" fill="#131E33"/>
+    <rect x="152" y="112" width="20" height="20" rx="5" fill="url(#barComp)"/>
+    <text x="434" y="126" fill="#CBD5E1" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.8">7% (6 poison)</text>
+    <text x="614" y="126" fill="#CBD5E1" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.8">1,147 tok</text>
+    <text x="706" y="126" fill="#CBD5E1" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.8">66 ms</text>
+    <text x="782" y="126" fill="#CBD5E1" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.8">13.9k (6.7x)</text>
+
+    <!-- Row 4: MCP Memory -->
+    <text x="22" y="158" fill="#94A3B8" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" font-weight="500">MCP Memory</text>
+    <rect x="152" y="143" width="264" height="20" rx="5" fill="#131E33"/>
+    <rect x="152" y="143" width="20" height="20" rx="5" fill="url(#barComp)"/>
+    <text x="434" y="157" fill="#FCA5A5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.8">7% (23 poison)</text>
+    <text x="614" y="157" fill="#FCA5A5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.8">11,499 tok</text>
+    <text x="706" y="157" fill="#FCA5A5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.8">94 ms</text>
+    <text x="782" y="157" fill="#FCA5A5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.8">30.1k (14.5x)</text>
+
+    <text x="22" y="184" fill="#64748B" font-family="-apple-system, BlinkMacSystemFont, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="10.3">O(1) invariant from 3 weeks (32 sessions) to 3 months (400 sessions) — 3.06x to 296.9x win across every core retrieval &amp; cost metric.</text>
+  </g>
+</svg>

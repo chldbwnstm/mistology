@@ -1,0 +1,19 @@
+[package]
+name = "mistology"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.85"
+description = "Project-local mistake ontology CLI & agent skill powered by SQLite FTS5 and directed 2-hop coupling graphs"
+repository = "https://github.com/chldbwnstm/mistology"
+homepage = "https://github.com/chldbwnstm/mistology"
+license = "MIT OR Apache-2.0"
+readme = "README.md"
+keywords = ["ai-agents", "ontology", "sqlite", "fts5", "cli"]
+categories = ["command-line-utilities", "development-tools"]
+exclude = ["assets/*.webp"]
+
+[dependencies]
+clap = { version = "4", features = ["derive"] }
+rusqlite = { version = "0.32", features = ["bundled"] }
+serde_json = "1"
+unicode-normalization = "0.1"
