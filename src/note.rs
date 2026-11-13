@@ -237,7 +237,7 @@ pub fn notes_dir(root: &Path) -> Result<PathBuf, String> {
     fs::create_dir_all(&d).map_err(|e| e.to_string())?;
     let ignore = root.join(".mistology").join(".gitignore");
     if !ignore.exists() {
-        fs::write(&ignore, "index.db*\n*.tmp\n").map_err(|e| e.to_string())?;
+        fs::write(&ignore, "index.db*\nevents.jsonl*\n*.tmp\n").map_err(|e| e.to_string())?;
     }
     Ok(d)
 }

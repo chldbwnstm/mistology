@@ -44,6 +44,7 @@ fn copy_tree(src: &Path, dst: &Path) {
         let name_os = entry.file_name();
         let name = name_os.to_string_lossy();
         if name.starts_with("index.db")
+            || name.starts_with("events.jsonl")
             || name.ends_with(".tmp")
             || name == "__pycache__"
             || name == "target"

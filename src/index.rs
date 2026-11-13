@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use unicode_normalization::UnicodeNormalization;
 
-const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 3;
 
 const SCHEMA: &str = "
 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
@@ -87,6 +87,16 @@ pub struct SearchHit {
     pub symbols: String,
     pub coupled: String,
     pub via: Option<String>,
+}
+
+#[derive(Debug, Clone)]
+pub struct ScoredHit {
+    pub hit: SearchHit,
+    pub score: f64,
+}
+
+fn pos_score(raw: f64) -> f64 {
+    ((-raw).max(0.0) * 100.0).round() / 100.0
 }
 
 #[derive(Clone, Copy)]
@@ -1019,21 +1029,50 @@ fn score_fts_candidates(
     Ok(())
 }
 
+#[derive(Default)]
+struct ExplainTrace {
+    resolved_entities: Vec<String>,
+    fts_scores: HashMap<String, f64>,
+    entity_bonuses: HashMap<String, (f64, Vec<String>)>,
+    seeds: Vec<(String, f64)>,
+    hop_origins: HashMap<String, String>,
+    dropped: Vec<(String, f64, String)>,
+}
+
+impl ExplainTrace {
+    fn clear(&mut self) {
+        self.resolved_entities.clear();
+        self.fts_scores.clear();
+        self.entity_bonuses.clear();
+        self.seeds.clear();
+        self.hop_origins.clear();
+        self.dropped.clear();
+    }
+}
+
 fn query_conn(
     conn: &mut Connection,
     d: &Path,
     plan: &QueryPlan<'_>,
-) -> rusqlite::Result<Vec<SearchHit>> {
+    mut trace: Option<&mut ExplainTrace>,
+) -> rusqlite::Result<Vec<ScoredHit>> {
+    if let Some(tr) = trace.as_deref_mut() {
+        tr.clear();
+    }
     sync(conn, d)?;
 
     let mut scores: HashMap<String, Candidate> = HashMap::new();
     score_fts_candidates(conn, plan, &mut scores)?;
     let fts_scores: HashMap<String, f64> =
         scores.iter().map(|(id, c)| (id.clone(), c.score)).collect();
+    if let Some(tr) = trace.as_deref_mut() {
+        tr.fts_scores = fts_scores.iter().map(|(id, &s)| (id.clone(), pos_score(s))).collect();
+    }
 
     let mut resolved_seen = HashSet::new();
     let mut queried_files = HashSet::new();
     let mut note_entity_bonuses: HashMap<String, Vec<f64>> = HashMap::new();
+    let mut note_matched_ents: HashMap<String, Vec<String>> = HashMap::new();
     let mut note_primary_bonuses: HashMap<String, Vec<f64>> = HashMap::new();
     let mut note_primary_ents: HashMap<String, Vec<String>> = HashMap::new();
     let mut note_coupled_ents: HashMap<String, HashSet<String>> = HashMap::new();
@@ -1058,6 +1097,9 @@ fn query_conn(
             if !resolved_seen.insert(ent.clone()) {
                 continue;
             }
+            if let Some(tr) = trace.as_deref_mut() {
+                tr.resolved_entities.push(ent.clone());
+            }
             if is_canonical_file_path(&ent)
                 && ent
                     .rsplit_once('.')
@@ -1081,6 +1123,9 @@ fn query_conn(
                 }
                 let bonus = base_bonus * (1.0 + 0.2 * wrong as f64);
                 note_entity_bonuses.entry(note_id.clone()).or_default().push(bonus);
+                if trace.is_some() {
+                    note_matched_ents.entry(note_id.clone()).or_default().push(ent.clone());
+                }
                 if has_primary != 0 {
                     note_primary_bonuses.entry(note_id.clone()).or_default().push(bonus);
                     note_primary_ents.entry(note_id).or_default().push(ent.clone());
@@ -1093,6 +1138,10 @@ fn query_conn(
     for (note_id, bonuses) in note_entity_bonuses.iter_mut() {
         bonuses.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
         let total_bonus = bonuses[0] + bonuses[1..].iter().sum::<f64>() * 0.25;
+        if let Some(tr) = trace.as_deref_mut() {
+            let ents = note_matched_ents.remove(note_id).unwrap_or_default();
+            tr.entity_bonuses.insert(note_id.clone(), (pos_score(total_bonus), ents));
+        }
         let entry = scores.entry(note_id.clone()).or_insert(Candidate {
             score: 0.0,
             via: None,
@@ -1115,6 +1164,17 @@ fn query_conn(
     }
 
     if plan.require_multi_body {
+        if let Some(tr) = trace.as_deref_mut() {
+            for (id, c) in &scores {
+                if !(c.has_structured || c.matched_body_words >= 2) {
+                    tr.dropped.push((
+                        id.clone(),
+                        pos_score(c.score),
+                        "탈락: 본문 단어 단독 1개 매칭 (다단어 필터)".to_string(),
+                    ));
+                }
+            }
+        }
         scores.retain(|_, c| c.has_structured || c.matched_body_words >= 2);
     }
 
@@ -1153,6 +1213,9 @@ fn query_conn(
             if seeds.len() >= plan.k {
                 break;
             }
+        }
+        if let Some(tr) = trace.as_deref_mut() {
+            tr.seeds = seeds.iter().map(|(id, s)| (id.clone(), pos_score(*s))).collect();
         }
         let seed_ids: HashSet<String> = seeds.iter().map(|(id, _)| id.clone()).collect();
         let weakest_seed_score = seeds.last().map(|(_, s)| *s).unwrap_or(best_score);
@@ -1226,6 +1289,12 @@ fn query_conn(
                                 matched_body_words: 0,
                             },
                         );
+                        if let Some(tr) = trace.as_deref_mut() {
+                            tr.hop_origins.insert(
+                                nbr_id.clone(),
+                                format!("hop1 from {seed_id} | 연결: {via_entity}"),
+                            );
+                        }
                         hop_score
                     }
                     Some(existing) if hop_score < existing.score => {
@@ -1238,6 +1307,12 @@ fn query_conn(
                                 matched_body_words: existing.matched_body_words,
                             },
                         );
+                        if let Some(tr) = trace.as_deref_mut() {
+                            tr.hop_origins.insert(
+                                nbr_id.clone(),
+                                format!("hop1 from {seed_id} | 연결: {via_entity}"),
+                            );
+                        }
                         hop_score
                     }
                     Some(existing) if coupled_only_direct && existing.via.is_none() => {
@@ -1252,6 +1327,12 @@ fn query_conn(
                                 matched_body_words: mbw,
                             },
                         );
+                        if let Some(tr) = trace.as_deref_mut() {
+                            tr.hop_origins.insert(
+                                nbr_id.clone(),
+                                format!("hop1 from {seed_id} | 연결: {via_entity}"),
+                            );
+                        }
                         kept.max(hop_score)
                     }
                     Some(existing) => existing.score.max(hop_score),
@@ -1317,11 +1398,18 @@ fn query_conn(
                 let hop2_score = h1_score * hop2_factor;
                 if scores.get(&h2_id).is_none_or(|ex| hop2_score < ex.score) {
                     let prev_mbw = scores.get(&h2_id).map_or(0, |ex| ex.matched_body_words);
+                    let chain_via = format!("{via1} → {via2}");
+                    if let Some(tr) = trace.as_deref_mut() {
+                        tr.hop_origins.insert(
+                            h2_id.clone(),
+                            format!("hop2 from {h1_id} | 연결: {chain_via}"),
+                        );
+                    }
                     scores.insert(
                         h2_id,
                         Candidate {
                             score: hop2_score,
-                            via: Some(format!("{via1} → {via2}")),
+                            via: Some(chain_via),
                             has_structured: true,
                             matched_body_words: prev_mbw,
                         },
@@ -1330,8 +1418,23 @@ fn query_conn(
             }
         }
 
+        if let Some(tr) = trace.as_deref_mut() {
+            tr.dropped.retain(|(id, _, _)| !scores.contains_key(id));
+        }
+
         if weakest_seed_score < -15.0 {
             let cutoff = weakest_seed_score * 0.12;
+            if let Some(tr) = trace.as_deref_mut() {
+                for (id, c) in &scores {
+                    if c.score > cutoff {
+                        tr.dropped.push((
+                            id.clone(),
+                            pos_score(c.score),
+                            format!("탈락: 시드 대비 노이즈 컷오프 미달 (< {:.2})", pos_score(cutoff)),
+                        ));
+                    }
+                }
+            }
             scores.retain(|_, c| c.score <= cutoff);
         }
     }
@@ -1339,6 +1442,15 @@ fn query_conn(
     let mut ranked: Vec<(String, f64, Option<String>)> =
         scores.into_iter().map(|(id, c)| (id, c.score, c.via)).collect();
     ranked.sort_by(|a, b| a.1.partial_cmp(&b.1).unwrap_or(std::cmp::Ordering::Equal).then_with(|| b.0.cmp(&a.0)));
+    if let Some(tr) = trace {
+        for (idx, (id, sc, _)) in ranked.iter().enumerate().skip(plan.k) {
+            tr.dropped.push((
+                id.clone(),
+                pos_score(*sc),
+                format!("탈락: 상위 k={} 밖 ({}위)", plan.k, idx + 1),
+            ));
+        }
+    }
     ranked.truncate(plan.k);
 
     let mut hits = Vec::with_capacity(ranked.len());
@@ -1346,7 +1458,7 @@ fn query_conn(
         "SELECT filename, current, wrong, problem, fix, next_step, pitfalls, files, symbols, coupled
          FROM cards WHERE id = ?1",
     )?;
-    for (id, _, via) in ranked {
+    for (id, raw_sc, via) in ranked {
         let hit = card_stmt.query_row(params![id], |r| {
             let filename: String = r.get(0)?;
             Ok(SearchHit {
@@ -1364,7 +1476,7 @@ fn query_conn(
                 via: via.clone(),
             })
         })?;
-        hits.push(hit);
+        hits.push(ScoredHit { hit, score: pos_score(raw_sc) });
     }
     Ok(hits)
 }
@@ -1373,7 +1485,8 @@ fn query_index(
     index_path: &Path,
     d: &Path,
     plan: &QueryPlan<'_>,
-) -> rusqlite::Result<Vec<SearchHit>> {
+    trace: Option<&mut ExplainTrace>,
+) -> rusqlite::Result<Vec<ScoredHit>> {
     let mut conn = Connection::open(index_path)?;
     conn.busy_timeout(std::time::Duration::from_secs(5))?;
     let ver: i32 = conn.query_row("PRAGMA user_version", [], |r| r.get(0))?;
@@ -1393,13 +1506,17 @@ fn query_index(
         tx.commit()?;
     }
     conn.execute_batch("PRAGMA synchronous = NORMAL;")?;
-    query_conn(&mut conn, d, plan)
+    query_conn(&mut conn, d, plan, trace)
 }
 
-fn query_in_memory(d: &Path, plan: &QueryPlan<'_>) -> rusqlite::Result<Vec<SearchHit>> {
+fn query_in_memory(
+    d: &Path,
+    plan: &QueryPlan<'_>,
+    trace: Option<&mut ExplainTrace>,
+) -> rusqlite::Result<Vec<ScoredHit>> {
     let mut conn = Connection::open_in_memory()?;
     conn.execute_batch(SCHEMA)?;
-    query_conn(&mut conn, d, plan)
+    query_conn(&mut conn, d, plan, trace)
 }
 
 pub fn search(root: &Path, query: &str, k: usize) -> Vec<SearchHit> {
@@ -1407,9 +1524,27 @@ pub fn search(root: &Path, query: &str, k: usize) -> Vec<SearchHit> {
 }
 
 pub fn search_in(root: &Path, cwd: &Path, query: &str, k: usize) -> Vec<SearchHit> {
+    search_scored_in(root, cwd, query, k).into_iter().map(|s| s.hit).collect()
+}
+
+fn run_search_internal(
+    root: &Path,
+    cwd: &Path,
+    query: &str,
+    k: usize,
+    mut trace: Option<&mut ExplainTrace>,
+) -> (Vec<ScoredHit>, Vec<String>, Vec<String>, Option<String>, bool) {
     let d = root.join(".mistology").join("notes");
+    let root_canon = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let cwd_canon = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    let rel_cwd = cwd_canon
+        .strip_prefix(&root_canon)
+        .ok()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_string_lossy().replace('\\', "/").to_lowercase());
+
     if !d.is_dir() || k == 0 {
-        return Vec::new();
+        return (Vec::new(), Vec::new(), Vec::new(), rel_cwd, false);
     }
     let norm_q: String = query.nfc().collect();
     let (quoted_spans, cleaned_q, saw_quoted_path) = scan_quoted_spans(&norm_q);
@@ -1443,19 +1578,11 @@ pub fn search_in(root: &Path, cwd: &Path, query: &str, k: usize) -> Vec<SearchHi
     }
     words.retain(|w| !NOISE_WORDS.contains(&w.as_str()));
 
-    let root_canon = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
-    let cwd_canon = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
-    let rel_cwd = cwd_canon
-        .strip_prefix(&root_canon)
-        .ok()
-        .filter(|p| !p.as_os_str().is_empty())
-        .map(|p| p.to_string_lossy().replace('\\', "/").to_lowercase());
-
     let query_entities = extract_query_entities(&norm_q, &quoted_spans, root, cwd, rel_cwd.as_deref());
-    if words.is_empty() && query_entities.is_empty() {
-        return Vec::new();
-    }
     let require_multi_body = words.len() >= 4 || (had_path && words.len() >= 3);
+    if words.is_empty() && query_entities.is_empty() {
+        return (Vec::new(), words, query_entities, rel_cwd, require_multi_body);
+    }
     let fts_query = words
         .iter()
         .map(|w| {
@@ -1476,12 +1603,17 @@ pub fn search_in(root: &Path, cwd: &Path, query: &str, k: usize) -> Vec<SearchHi
         k,
     };
 
-    match query_index(&index_path, &d, &plan) {
+    let hits = match query_index(&index_path, &d, &plan, trace.as_deref_mut()) {
         Ok(hits) => hits,
         Err(rusqlite::Error::SqliteFailure(err, _))
             if matches!(err.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked) =>
         {
-            query_in_memory(&d, &plan).unwrap_or_default()
+            query_in_memory(&d, &plan, trace.as_deref_mut()).unwrap_or_else(|_| {
+                if let Some(tr) = trace {
+                    tr.clear();
+                }
+                Vec::new()
+            })
         }
         Err(_) => {
             if let Ok(entries) = fs::read_dir(root.join(".mistology")) {
@@ -1491,11 +1623,104 @@ pub fn search_in(root: &Path, cwd: &Path, query: &str, k: usize) -> Vec<SearchHi
                     }
                 }
             }
-            query_index(&index_path, &d, &plan)
-                .or_else(|_| query_in_memory(&d, &plan))
-                .unwrap_or_default()
+            match query_index(&index_path, &d, &plan, trace.as_deref_mut()) {
+                Ok(hits) => hits,
+                Err(_) => query_in_memory(&d, &plan, trace.as_deref_mut()).unwrap_or_else(|_| {
+                    if let Some(tr) = trace {
+                        tr.clear();
+                    }
+                    Vec::new()
+                }),
+            }
+        }
+    };
+    (hits, words, query_entities, rel_cwd, require_multi_body)
+}
+
+pub fn search_scored_in(root: &Path, cwd: &Path, query: &str, k: usize) -> Vec<ScoredHit> {
+    run_search_internal(root, cwd, query, k, None).0
+}
+
+pub fn explain_in(root: &Path, cwd: &Path, query: &str, k: usize) -> (Vec<ScoredHit>, String) {
+    let mut trace = ExplainTrace::default();
+    let (hits, words, raw_entities, rel_cwd, require_multi_body) =
+        run_search_internal(root, cwd, query, k, Some(&mut trace));
+
+    let cwd_disp = rel_cwd.as_deref().unwrap_or(".");
+    let ents_disp = if !trace.resolved_entities.is_empty() {
+        trace.resolved_entities.join(", ")
+    } else {
+        raw_entities.join(", ")
+    };
+    let seeds_disp = trace
+        .seeds
+        .iter()
+        .map(|(id, sc)| format!("{id} ({sc:.2})"))
+        .collect::<Vec<_>>()
+        .join(", ");
+
+    let mut lines = vec![
+        "# MISTOLOGY Search Explain (점수 높을수록 상위)".to_string(),
+        format!("- cwd: {cwd_disp}"),
+        format!(
+            "- words: [{}] (다단어 필터={}, k={k})",
+            words.join(", "),
+            require_multi_body
+        ),
+        format!("- entities: [{ents_disp}]"),
+        format!("- seeds: [{seeds_disp}]"),
+        String::new(),
+        format!("## [선정] 상위 {}개", hits.len()),
+    ];
+
+    if hits.is_empty() {
+        lines.push("- (선정된 노트 없음)".to_string());
+    } else {
+        for (idx, sh) in hits.iter().enumerate() {
+            let h = &sh.hit;
+            let fts = trace.fts_scores.get(&h.id).copied().unwrap_or(0.0);
+            let (ent_sc, ent_list) = trace
+                .entity_bonuses
+                .get(&h.id)
+                .cloned()
+                .unwrap_or((0.0, Vec::new()));
+            let mut parts = vec![format!("fts={fts:.2}")];
+            if ent_sc > 0.0 {
+                parts.push(format!("entity={ent_sc:.2} ({})", ent_list.join(", ")));
+            } else {
+                parts.push("entity=0.00".to_string());
+            }
+            if let Some(hop) = trace.hop_origins.get(&h.id) {
+                parts.push(hop.clone());
+            } else if let Some(via) = &h.via {
+                parts.push(format!("연결: {via}"));
+            }
+            lines.push(format!(
+                "{}. {} ({}, 오답 {}회) — 총점 {:.2} [{}]",
+                idx + 1,
+                h.id,
+                h.current,
+                h.wrong,
+                sh.score,
+                parts.join(", ")
+            ));
         }
     }
+
+    if !trace.dropped.is_empty() {
+        trace.dropped.sort_by(|a, b| {
+            b.1.partial_cmp(&a.1)
+                .unwrap_or(std::cmp::Ordering::Equal)
+                .then_with(|| a.0.cmp(&b.0))
+        });
+        lines.push(String::new());
+        lines.push(format!("## [탈락/하위] 후보 {}개", trace.dropped.len()));
+        for (id, sc, reason) in trace.dropped.iter().take(12) {
+            lines.push(format!("- {id} — {sc:.2} ({reason})"));
+        }
+    }
+
+    (hits, format!("{}\n", lines.join("\n")))
 }
 
 pub fn format_card(root: &Path, h: &SearchHit) -> String {

@@ -6,7 +6,7 @@
 
 [![Language: Rust](https://img.shields.io/badge/Rust-2021_Edition-F74C00?style=flat-square&logo=rust&logoColor=white)](./Cargo.toml)
 [![Engine: SQLite FTS5 + 2-Hop Graph](https://img.shields.io/badge/Index-SQLite_FTS5_%2B_2--Hop_Graph-0284C7?style=flat-square&logo=sqlite&logoColor=white)](./src/index.rs)
-[![Evals: 52/52 + 20 Unit](https://img.shields.io/badge/Tests-72%2F72_%28100%25%29-10B981?style=flat-square)](./tests/hardening_evals.rs)
+[![Evals: 52/52 + 23 Unit](https://img.shields.io/badge/Tests-75%2F75_%28100%25%29-10B981?style=flat-square)](./tests/hardening_evals.rs)
 [![OSS Benchmark: 3x-297x](https://img.shields.io/badge/vs_OSS_Memory-3x--297x_Win-0EA5E9?style=flat-square)](#open-source-agent-memory-benchmark-3x-win)
 [![Runtime Deps: Zero](https://img.shields.io/badge/Runtime_Deps-Zero_%28Single_Binary%29-7C3AED?style=flat-square)](./Cargo.toml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT_OR_Apache--2.0-F59E0B?style=flat-square)](./LICENSE-MIT)
@@ -179,6 +179,19 @@ mistology supersede 2026-11-11-003 \
 
 If a module is deleted and a note no longer applies, change `status: active` to `status: retired` in its frontmatter.
 
+#### Diagnostics & Bug Triage (`--explain` · `doctor` · `events.jsonl`)
+
+```bash
+# Inspect exact BM25, entity bonus, 1/2-hop propagation, and cutoff reasons for any query
+mistology search --explain "src/billing/currency.py VND KWD"
+
+# Print a privacy-safe health snapshot (redacts local paths & queries) for GitHub bug reports
+mistology doctor
+
+# Inspect recent background agent invocations (git-ignored, auto-rotates at 256 KiB)
+tail -n 20 .mistology/events.jsonl
+```
+
 </details>
 
 ---
@@ -211,7 +224,7 @@ Four isolated coding agents solved the exact same 4-part ticket (`VND/KWD/OMR` m
 
 ---
 
-## Reproducible Evaluation Suites (`52 / 52` + `20` Unit Tests)
+## Reproducible Evaluation Suites (`52 / 52` + `23` Unit Tests)
 
 MISTOLOGY ships with **3 polyglot validation projects** ([`evals/shopcore`](./evals/shopcore) Python 12-module backend, [`evals/webmono`](./evals/webmono) TypeScript/Next.js monorepo, and [`evals/rustkv`](./evals/rustkv) Rust Cargo workspace) and **52 quantitative scenarios** across [`tests/evals.rs`](./tests/evals.rs) and [`tests/hardening_evals.rs`](./tests/hardening_evals.rs):
 
@@ -237,9 +250,10 @@ python3 -B -m unittest discover -s evals/shopcore/tests -t evals/shopcore -v
 ├── assets/                   # Custom vector SVGs & auto-playing overview WebPs
 ├── src/
 │   ├── main.rs               # Binary entrypoint
-│   ├── lib.rs                # CLI subcommands (search, new, supersede, setup) & monorepo rebasing
+│   ├── lib.rs                # CLI subcommands (search, new, supersede, setup, doctor) & monorepo rebasing
+│   ├── diag.rs               # 256 KiB rotating flight recorder (events.jsonl) & privacy-safe doctor
 │   ├── note.rs               # Markdown + frontmatter parser, conflict guards, version evolution
-│   └── index.rs              # SQLite WAL + FTS5 + directed 1/2-hop ontology graph & brief/card formatter
+│   └── index.rs              # SQLite WAL + FTS5 + directed 1/2-hop ontology graph, --explain & formatters
 ├── skills/mistology/
 │   └── SKILL.md              # Agent skill specification (Claude, Codex, Gemini/AGY, Cursor)
 ├── evals/
@@ -248,7 +262,7 @@ python3 -B -m unittest discover -s evals/shopcore/tests -t evals/shopcore -v
 │   ├── webmono/              # TypeScript/Next.js monorepo + 6 ontology notes
 │   └── rustkv/               # Rust Cargo workspace + 6 ontology notes
 └── tests/
-    ├── mistology.rs          # Unit & edge-case regression tests (20 tests)
+    ├── mistology.rs          # Unit, diagnostics & edge-case regression tests (23 tests)
     ├── evals.rs              # Core 6-category retrieval & token benchmark (24 scenarios)
     └── hardening_evals.rs    # Polyglot, stacktrace, conflict, sandbox & concurrency benchmark (28 scenarios)
 ```

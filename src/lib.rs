@@ -1,3 +1,4 @@
+pub mod diag;
 pub mod index;
 pub mod note;
 
@@ -5,6 +6,7 @@ use clap::{Args, Parser, Subcommand};
 use std::ffi::OsString;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::time::Instant;
 
 const EMBEDDED_SKILL_MD: &str = include_str!("../skills/mistology/SKILL.md");
 
@@ -41,16 +43,18 @@ struct CommonWrite {
 
 #[derive(Subcommand)]
 enum Cmd {
-    /// 관련 오답 요약 카드(또는 -b 초압축 브리핑 / --full 전문) top-k 출력
+    /// 관련 오답 요약 카드(또는 -b 초압축 브리핑 / --full 전문 / --explain 진단) top-k 출력
     Search {
         #[arg(required = true, allow_hyphen_values = true)]
         query: Vec<String>,
         #[arg(short = 'k')]
         k: Option<usize>,
-        #[arg(short = 'b', long, conflicts_with = "full", help = "토큰 절약형 초압축 브리핑 출력 (기본 k=6)")]
+        #[arg(short = 'b', long, conflicts_with_all = ["full", "explain"], help = "토큰 절약형 초압축 브리핑 출력 (기본 k=6)")]
         brief: bool,
-        #[arg(long, help = "요약 카드 대신 마크다운 노트 전문 출력")]
+        #[arg(long, conflicts_with = "explain", help = "요약 카드 대신 마크다운 노트 전문 출력")]
         full: bool,
+        #[arg(long, help = "후보별 점수 계산·1/2-hop 전파·절삭 사유 진단 출력")]
+        explain: bool,
     },
     /// 새 문제: v1(오답) + v2(현재 정답)
     New {
@@ -80,6 +84,11 @@ enum Cmd {
         #[arg(long, hide = true)]
         home: Option<PathBuf>,
     },
+    /// 설치·인덱스·노트 파싱·이벤트 로그 상태를 점검해 이슈 제보용 요약을 출력
+    Doctor {
+        #[arg(long, hide = true)]
+        home: Option<PathBuf>,
+    },
 }
 
 pub fn run_cli<I, T>(cwd: &Path, args: I) -> Result<String, String>
@@ -93,17 +102,60 @@ where
         Err(e) => return Err(e.to_string()),
     };
     let root = note::find_root(cwd);
+    let default_home = resolve_default_home();
+    let started = Instant::now();
     match cli.cmd {
-        Cmd::Search { query, k, brief, full } => {
+        Cmd::Search { query, k, brief, full, explain } => {
             let limit = k.unwrap_or(if brief { 6 } else { 3 });
-            let hits = index::search_in(&root, cwd, &query.join(" "), limit);
-            if hits.is_empty() {
+            let q_str = query.join(" ");
+            if explain {
+                let (scored, report) = index::explain_in(&root, cwd, &q_str, limit);
+                diag::record_event(
+                    &root,
+                    cwd,
+                    default_home.as_deref(),
+                    "search",
+                    started.elapsed().as_secs_f64() * 1000.0,
+                    diag::EventDetail::Search {
+                        mode: "explain",
+                        k: limit,
+                        query: &q_str,
+                        hits: &scored,
+                    },
+                    None,
+                );
+                return Ok(report);
+            }
+            let scored = index::search_scored_in(&root, cwd, &q_str, limit);
+            let mode = if brief {
+                "brief"
+            } else if full {
+                "full"
+            } else {
+                "card"
+            };
+            diag::record_event(
+                &root,
+                cwd,
+                default_home.as_deref(),
+                "search",
+                started.elapsed().as_secs_f64() * 1000.0,
+                diag::EventDetail::Search {
+                    mode,
+                    k: limit,
+                    query: &q_str,
+                    hits: &scored,
+                },
+                None,
+            );
+            if scored.is_empty() {
                 return Ok("관련 오답노트 없음\n".to_string());
             }
             let sep = if brief { "\n" } else { "\n\n" };
-            let out = hits
+            let out = scored
                 .iter()
-                .map(|h| {
+                .map(|sh| {
+                    let h = &sh.hit;
                     if brief {
                         index::format_brief(h)
                     } else if let Some(raw) = full.then(|| fs::read_to_string(&h.path).ok()).flatten() {
@@ -125,7 +177,7 @@ where
         Cmd::New { problem, tried, force, common } => {
             let files = note::rebase_cwd_paths(&root, cwd, &common.files);
             let coupled = note::rebase_cwd_paths(&root, cwd, &common.coupled);
-            let p = note::new_note(
+            let res = note::new_note(
                 &root,
                 note::NewFields {
                     problem: &problem,
@@ -142,9 +194,36 @@ where
                     tags: &common.tags,
                     force,
                 },
-            )?;
-            let rel = p.strip_prefix(&root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
-            Ok(format!("{rel}\n"))
+            );
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            match res {
+                Ok(p) => {
+                    let nid = p.file_stem().and_then(|s| s.to_str());
+                    diag::record_event(
+                        &root,
+                        cwd,
+                        default_home.as_deref(),
+                        "new",
+                        elapsed_ms,
+                        diag::EventDetail::Write { note_id: nid },
+                        None,
+                    );
+                    let rel = p.strip_prefix(&root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+                    Ok(format!("{rel}\n"))
+                }
+                Err(e) => {
+                    diag::record_event(
+                        &root,
+                        cwd,
+                        default_home.as_deref(),
+                        "new",
+                        elapsed_ms,
+                        diag::EventDetail::Write { note_id: None },
+                        Some(&e),
+                    );
+                    Err(e)
+                }
+            }
         }
         Cmd::Supersede { note_id, common } => {
             let norm_id = note::rebase_cwd_paths(&root, cwd, std::slice::from_ref(&note_id))
@@ -153,7 +232,7 @@ where
                 .unwrap_or(note_id);
             let files = note::rebase_cwd_paths(&root, cwd, &common.files);
             let coupled = note::rebase_cwd_paths(&root, cwd, &common.coupled);
-            let p = note::supersede(
+            let res = note::supersede(
                 &root,
                 &norm_id,
                 note::SupersedeFields {
@@ -168,11 +247,52 @@ where
                     coupled: &coupled,
                     tags: &common.tags,
                 },
-            )?;
-            let rel = p.strip_prefix(&root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
-            Ok(format!("{rel}\n"))
+            );
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            match res {
+                Ok(p) => {
+                    let nid = p.file_stem().and_then(|s| s.to_str());
+                    diag::record_event(
+                        &root,
+                        cwd,
+                        default_home.as_deref(),
+                        "supersede",
+                        elapsed_ms,
+                        diag::EventDetail::Write { note_id: nid },
+                        None,
+                    );
+                    let rel = p.strip_prefix(&root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+                    Ok(format!("{rel}\n"))
+                }
+                Err(e) => {
+                    diag::record_event(
+                        &root,
+                        cwd,
+                        default_home.as_deref(),
+                        "supersede",
+                        elapsed_ms,
+                        diag::EventDetail::Write { note_id: Some(norm_id.as_str()) },
+                        Some(&e),
+                    );
+                    Err(e)
+                }
+            }
         }
         Cmd::Setup { project, all, force, home } => run_setup(&root, project, all, force, home),
+        Cmd::Doctor { home } => {
+            let eff_home = home.or(default_home);
+            let bin_in_path = std::env::current_exe()
+                .ok()
+                .and_then(|p| p.parent().map(dir_on_path))
+                .unwrap_or(false);
+            Ok(diag::run_doctor(
+                &root,
+                cwd,
+                eff_home.as_deref(),
+                EMBEDDED_SKILL_MD,
+                bin_in_path,
+            ))
+        }
     }
 }
 

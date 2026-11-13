@@ -6,7 +6,7 @@
 
 [![Language: Rust](https://img.shields.io/badge/Rust-2021_Edition-F74C00?style=flat-square&logo=rust&logoColor=white)](./Cargo.toml)
 [![Engine: SQLite FTS5 + 2-Hop Graph](https://img.shields.io/badge/Index-SQLite_FTS5_%2B_2--Hop_Graph-0284C7?style=flat-square&logo=sqlite&logoColor=white)](./src/index.rs)
-[![Evals: 52/52 + 20 Unit](https://img.shields.io/badge/Tests-72%2F72_%28100%25%29-10B981?style=flat-square)](./tests/hardening_evals.rs)
+[![Evals: 52/52 + 23 Unit](https://img.shields.io/badge/Tests-75%2F75_%28100%25%29-10B981?style=flat-square)](./tests/hardening_evals.rs)
 [![OSS Benchmark: 3x-297x](https://img.shields.io/badge/vs_OSS_Memory-3x--297x_Win-0EA5E9?style=flat-square)](#오픈소스-에이전트-메모리-4자-비교-벤치마크-3배-이상-우위)
 [![Runtime Deps: Zero](https://img.shields.io/badge/Runtime_Deps-Zero_%28Single_Binary%29-7C3AED?style=flat-square)](./Cargo.toml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT_OR_Apache--2.0-F59E0B?style=flat-square)](./LICENSE-MIT)
@@ -179,6 +179,19 @@ mistology supersede 2026-11-11-003 \
 
 관련 모듈이 완전히 삭제되어 더 이상 유효하지 않은 노트는 frontmatter의 `status: active`를 `status: retired`로 바꾸면 이력은 보존하면서 검색 결과에서만 제외됩니다.
 
+#### 진단 및 디버깅 (`--explain` · `doctor` · `events.jsonl`)
+
+```bash
+# 후보별 BM25·엔티티 가산점·1/2-hop 전파 경로·컷오프 탈락 사유를 한눈에 확인
+mistology search --explain "src/billing/currency.py VND KWD"
+
+# 로컬 경로·검색어 유출 없이 설치/인덱스/노트 상태를 점검 (GitHub 이슈 제보용)
+mistology doctor
+
+# 에이전트가 백그라운드에서 실행한 최근 호출 로그 확인 (Git 제외, 256 KiB 자동 로테이션)
+tail -n 20 .mistology/events.jsonl
+```
+
 </details>
 
 ---
@@ -211,7 +224,7 @@ mistology supersede 2026-11-11-003 \
 
 ---
 
-## 정량 평가 스위트 (`52 / 52` + 단위 테스트 `20`개)
+## 정량 평가 스위트 (`52 / 52` + 단위 테스트 `23`개)
 
 성격이 다른 **3개 언어·구조 검증 프로젝트**([`evals/shopcore`](./evals/shopcore) Python 12모듈 백엔드, [`evals/webmono`](./evals/webmono) TypeScript/Next.js 모노레포, [`evals/rustkv`](./evals/rustkv) Rust Cargo 워크스페이스)와 **총 52개 자동 시나리오**([`tests/evals.rs`](./tests/evals.rs), [`tests/hardening_evals.rs`](./tests/hardening_evals.rs))가 포함되어 있습니다.
 
@@ -237,9 +250,10 @@ python3 -B -m unittest discover -s evals/shopcore/tests -t evals/shopcore -v
 ├── assets/                   # 커스텀 벡터 SVG 및 자동 재생 프리뷰 WebP
 ├── src/
 │   ├── main.rs               # 바이너리 엔트리포인트
-│   ├── lib.rs                # CLI 서브커맨드 (search, new, supersede, setup) 및 모노레포 경로 보정
+│   ├── lib.rs                # CLI 서브커맨드 (search, new, supersede, setup, doctor) 및 모노레포 경로 보정
+│   ├── diag.rs               # 256 KiB 자동 로테이션 비행기록장치(events.jsonl) 및 비공개 경로 보호 doctor
 │   ├── note.rs               # 마크다운 + frontmatter 파서, 병합 충돌 방어, 버전 누적
-│   └── index.rs              # SQLite WAL + FTS5 + 단방향 1/2-hop 온톨로지 그래프 및 브리핑/카드 포매터
+│   └── index.rs              # SQLite WAL + FTS5 + 단방향 1/2-hop 온톨로지 그래프, --explain 및 포매터
 ├── skills/mistology/
 │   └── SKILL.md              # 에이전트 스킬 정의서 (Claude, Codex, Gemini/AGY, Cursor)
 ├── evals/
@@ -248,7 +262,7 @@ python3 -B -m unittest discover -s evals/shopcore/tests -t evals/shopcore -v
 │   ├── webmono/              # TypeScript/Next.js 모노레포 + 6개 오답 노트 픽스처
 │   └── rustkv/               # Rust Cargo 워크스페이스 + 6개 오답 노트 픽스처
 └── tests/
-    ├── mistology.rs          # 단위 및 엣지 케이스 회귀 테스트 (20개)
+    ├── mistology.rs          # 단위·진단·엣지 케이스 회귀 테스트 (23개)
     ├── evals.rs              # 핵심 검색·토큰 절감 정량 벤치마크 (24개 시나리오)
     └── hardening_evals.rs    # 다중 스택·스택트레이스·충돌·샌드박스·동시성 벤치마크 (28개 시나리오)
 ```

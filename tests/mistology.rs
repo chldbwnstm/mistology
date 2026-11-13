@@ -124,7 +124,10 @@ fn parse_and_validation_guard_edge_cases() {
     assert!(note::is_valid_id(&meta.id));
     assert!(!note::is_valid_id("2026-11-11-1"));
     assert!(!note::is_valid_id("../../etc/passwd"));
-    assert_eq!(fs::read_to_string(t.path().join(".mistology/.gitignore")).unwrap(), "index.db*\n*.tmp\n");
+    assert_eq!(
+        fs::read_to_string(t.path().join(".mistology/.gitignore")).unwrap(),
+        "index.db*\nevents.jsonl*\n*.tmp\n"
+    );
 
     for bad in [
         "## 문제 상황\n그냥 메모\n",
@@ -1495,4 +1498,323 @@ fn setup_project_mode_installs_workspace_skill() {
     );
     let body = fs::read_to_string(proj_skill).unwrap();
     assert!(body.contains("name: mistology"));
+}
+
+#[test]
+fn flight_recorder_logs_jsonl_heals_gitignore_and_rotates() {
+    // 1. Plain directory without `.mistology` must NEVER get `.mistology/events.jsonl` created on search/doctor
+    let plain = TempDir::new();
+    let _ = mistology::run_cli(plain.path(), ["mistology", "search", "nonexistent"]).unwrap();
+    let _ = mistology::run_cli(
+        plain.path(),
+        ["mistology", "doctor", "--home", plain.path().to_str().unwrap()],
+    )
+    .unwrap();
+    assert!(
+        !plain.path().join(".mistology").exists(),
+        "search/doctor must not create .mistology in an uninitialized directory"
+    );
+
+    // 2. Repo with `.git` and subdirectories logs relative `cwd`, heals legacy `.gitignore`, and records hits + errors
+    let repo = TempDir::new();
+    fs::create_dir_all(repo.path().join(".git")).unwrap();
+    let sub = repo.path().join("packages/api");
+    fs::create_dir_all(&sub).unwrap();
+    fs::write(sub.join("handler.ts"), "export const handle = () => {};\n").unwrap();
+
+    let created = mistology::run_cli(
+        &sub,
+        [
+            "mistology",
+            "new",
+            "--problem",
+            "API 타임아웃 누락",
+            "--tried",
+            "기본 fetch 호출",
+            "--evidence",
+            "TimeoutError: request hung",
+            "--why",
+            "처음부터 틀림: AbortSignal 미지정",
+            "--fix",
+            "AbortSignal.timeout(5000) 지정",
+            "--verified",
+            "timeout 테스트 통과",
+            "--next",
+            "외부 호출 시 AbortSignal 필수",
+            "--signature",
+            "TimeoutError: request hung",
+            "--file",
+            "handler.ts",
+        ],
+    )
+    .unwrap();
+    let note_id = Path::new(created.trim())
+        .file_stem()
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_string();
+
+    // Simulate legacy v0.1.0 `.mistology/.gitignore` missing `events.jsonl*`
+    let gi_path = repo.path().join(".mistology/.gitignore");
+    fs::write(&gi_path, "index.db*\n*.tmp\n").unwrap();
+
+    let stack_q = format!(
+        "File \"{}/packages/api/handler.ts\", line 9: TimeoutError",
+        repo.path().display()
+    );
+    let bad_note_arg = format!("{}/bad-id", repo.path().display());
+    let _ = mistology::run_cli(&sub, ["mistology", "search", "-b", &stack_q]).unwrap();
+    let _ = mistology::run_cli(&sub, ["mistology", "supersede", &bad_note_arg, "--evidence", "e", "--why", "바뀌어서 틀려짐: w", "--fix", "f", "--verified", "v", "--next", "n"]);
+
+    let healed_gi = fs::read_to_string(&gi_path).unwrap();
+    assert!(
+        healed_gi.contains("events.jsonl*"),
+        "legacy .mistology/.gitignore must self-heal with events.jsonl*:\n{healed_gi}"
+    );
+
+    let events_path = repo.path().join(".mistology/events.jsonl");
+    let raw_events = fs::read_to_string(&events_path).unwrap();
+    let repo_abs = repo.path().to_string_lossy();
+    let repo_canon = fs::canonicalize(repo.path()).unwrap().to_string_lossy().into_owned();
+    assert!(
+        !raw_events.contains(repo_abs.as_ref()) && !raw_events.contains(&repo_canon),
+        "events.jsonl must never leak logical or canonical host repo path:\n{raw_events}"
+    );
+
+    let parsed: Vec<serde_json::Value> = raw_events
+        .lines()
+        .map(|l| serde_json::from_str(l).expect("valid jsonl line"))
+        .collect();
+    assert_eq!(parsed.len(), 3, "expected 3 logged CLI events (new, search, failed supersede)");
+    assert_eq!(parsed[0]["cmd"], "new");
+    assert_eq!(parsed[0]["cwd"], "packages/api");
+    assert_eq!(parsed[0]["note"], note_id);
+    assert!(parsed[0]["err"].is_null());
+
+    assert_eq!(parsed[1]["cmd"], "search");
+    assert_eq!(parsed[1]["mode"], "brief");
+    assert_eq!(parsed[1]["hits"][0]["id"], note_id);
+    assert!(parsed[1]["hits"][0]["score"].as_f64().unwrap() > 0.0);
+
+    assert_eq!(parsed[2]["cmd"], "supersede");
+    assert!(parsed[2]["err"].as_str().unwrap().contains("노트 id 형식이 아님"));
+
+    // 3. Exceeding 256 KiB rotates `events.jsonl` -> `events.jsonl.1`
+    let filler = format!("{}\n", "{\"padding\":\"x\"}".repeat(18_000));
+    assert!(filler.len() > 262_144);
+    fs::write(&events_path, &filler).unwrap();
+
+    let _ = mistology::run_cli(repo.path(), ["mistology", "search", "TimeoutError"]).unwrap();
+    let rotated = repo.path().join(".mistology/events.jsonl.1");
+    assert!(rotated.is_file(), "oversized events.jsonl must rotate to events.jsonl.1");
+    assert!(fs::metadata(&rotated).unwrap().len() > 262_144);
+    let fresh_len = fs::metadata(&events_path).unwrap().len();
+    assert!(
+        fresh_len > 0 && fresh_len < 4096,
+        "rotated fresh events.jsonl should contain only the latest event (len={fresh_len})"
+    );
+}
+
+#[test]
+fn search_explain_shows_plan_scores_hops_and_cutoffs() {
+    let t = TempDir::new();
+    let mk = |sig: &str, problem: &str, files: &[&str], coupled: &[&str]| {
+        note::new_note(
+            t.path(),
+            NewFields {
+                problem,
+                tried: "이전 시도",
+                evidence: sig,
+                why: "처음부터 틀림: 원인",
+                fix: "검증된 수정안",
+                verified: "단위 테스트 통과",
+                next_step: "체크리스트 준수",
+                signatures: &svec(&[sig]),
+                files: &svec(files),
+                symbols: &[],
+                coupled: &svec(coupled),
+                tags: &[],
+                force: true,
+            },
+        )
+        .unwrap()
+    };
+
+    let p1 = mk(
+        "AuthTokenSig1",
+        "토큰 발급 페이로드 변경",
+        &["src/auth/token.py"],
+        &["src/middleware/session.py"],
+    );
+    let p2 = mk(
+        "SessionMidSig2",
+        "세션 미들웨어 파서 동기화",
+        &["src/middleware/session.py"],
+        &["src/workers/audit.py"],
+    );
+    let p3 = mk(
+        "AuditWorkerSig3",
+        "감사 워커 스키마 검증",
+        &["src/workers/audit.py"],
+        &[],
+    );
+    let p4 = mk(
+        "WeakNoiseSig4",
+        "전혀 무관한 배치 로깅 변경 작업",
+        &["src/batch/cleanup.py"],
+        &[],
+    );
+    let id1 = p1.file_stem().unwrap().to_str().unwrap();
+    let id2 = p2.file_stem().unwrap().to_str().unwrap();
+    let id3 = p3.file_stem().unwrap().to_str().unwrap();
+    let id4 = p4.file_stem().unwrap().to_str().unwrap();
+
+    // `--explain` conflicts with `-b` and `--full`
+    assert!(mistology::run_cli(t.path(), ["mistology", "search", "--explain", "-b", "src/auth/token.py"]).is_err());
+    assert!(mistology::run_cli(t.path(), ["mistology", "search", "--explain", "--full", "src/auth/token.py"]).is_err());
+
+    let explain_out = mistology::run_cli(
+        t.path(),
+        ["mistology", "search", "--explain", "src/auth/token.py 동기화 알파 베타 배치"],
+    )
+    .unwrap();
+
+    assert!(explain_out.contains("src/auth/token.py"), "must show extracted query entity:\n{explain_out}");
+    assert!(explain_out.contains(id1), "must include direct hit id1:\n{explain_out}");
+    assert!(explain_out.contains(id2), "must include 1-hop coupled hit id2:\n{explain_out}");
+    let (selected_sec, dropped_sec) = explain_out.split_once("## [탈락/하위]").expect("must have dropped section");
+    assert!(selected_sec.contains(id2), "id2 must be in selected section:\n{explain_out}");
+    assert!(
+        !dropped_sec.contains(id2),
+        "1-hop rescued note id2 must NOT remain in dropped section:\n{explain_out}"
+    );
+    assert!(
+        explain_out.contains("src/middleware/session.py → src/workers/audit.py") && explain_out.contains(id3),
+        "must show 2-hop chain propagation for id3:\n{explain_out}"
+    );
+    assert!(
+        dropped_sec.contains(id4),
+        "must explain dropped/cutoff candidate id4:\n{explain_out}"
+    );
+}
+
+#[test]
+fn doctor_reports_health_broken_notes_skill_drift_and_redacts_paths() {
+    let repo = TempDir::new();
+    let home = TempDir::new();
+    fs::create_dir_all(repo.path().join(".git")).unwrap();
+    let sub = repo.path().join("services/billing");
+    fs::create_dir_all(&sub).unwrap();
+
+    let p_active = note::new_note(
+        repo.path(),
+        NewFields {
+            problem: "정산 반올림 오차",
+            tried: "float 나눗셈",
+            evidence: "AssertionError: 100 != 99",
+            why: "처음부터 틀림: 부동소수점 오차",
+            fix: "Decimal ROUND_HALF_EVEN 사용",
+            verified: "정산 테스트 통과",
+            next_step: "통화 연산은 Decimal 사용",
+            signatures: &svec(&["AssertionError: 100 != 99"]),
+            files: &svec(&["services/billing/calc.py"]),
+            symbols: &[],
+            coupled: &[],
+            tags: &[],
+            force: false,
+        },
+    )
+    .unwrap();
+    let active_id = p_active.file_stem().unwrap().to_str().unwrap().to_string();
+
+    // Add 1 retired note, 1 malformed note, and 1 duplicate-ID collision note
+    let notes_d = repo.path().join(".mistology/notes");
+    let retired_raw = fs::read_to_string(&p_active)
+        .unwrap()
+        .replacen(&format!("id: {active_id}"), "id: 2026-01-01-001", 1)
+        .replacen("status: active", "status: retired", 1);
+    fs::write(notes_d.join("2026-01-01-001.md"), retired_raw).unwrap();
+    fs::write(notes_d.join("broken.md"), "깨진 노트 (frontmatter 없음)\n").unwrap();
+    let dup_raw = fs::read_to_string(&p_active).unwrap();
+    fs::write(notes_d.join("2026-01-01-099.md"), dup_raw).unwrap();
+
+    // Build index.db + record 1 ok search and 1 error event
+    let _ = mistology::run_cli(&sub, ["mistology", "search", "SECRET_INTERNAL_TOKEN_XYZ AssertionError"]).unwrap();
+    let _ = mistology::run_cli(&sub, ["mistology", "supersede", "invalid-id", "--evidence", "e", "--why", "바뀌어서 틀려짐: w", "--fix", "f", "--verified", "v", "--next", "n"]);
+
+    // Install skills to `home`, then tamper `.claude/skills/mistology/SKILL.md` to simulate drift
+    fs::create_dir_all(home.path().join(".claude")).unwrap();
+    mistology::run_cli(
+        repo.path(),
+        ["mistology", "setup", "--home", home.path().to_str().unwrap()],
+    )
+    .unwrap();
+    fs::write(
+        home.path().join(".claude/skills/mistology/SKILL.md"),
+        "# outdated skill\n",
+    )
+    .unwrap();
+
+    let home_trailing = format!("{}/", home.path().display());
+    let report = mistology::run_cli(
+        &sub,
+        ["mistology", "doctor", "--home", &home_trailing],
+    )
+    .unwrap();
+
+    // Privacy check: neither host repo path, host home path (logical or canonical), nor secret search query may appear!
+    let home_canon = fs::canonicalize(home.path()).unwrap();
+    assert!(
+        !report.contains(repo.path().to_str().unwrap()),
+        "doctor must redact repo absolute path:\n{report}"
+    );
+    assert!(
+        !report.contains(home.path().to_str().unwrap()) && !report.contains(home_canon.to_str().unwrap()),
+        "doctor must redact home logical & canonical paths:\n{report}"
+    );
+    assert!(
+        !report.contains("~.claude") && !report.contains("~.agents"),
+        "trailing slash on --home must not eat path separator:\n{report}"
+    );
+    assert!(
+        !report.contains("SECRET_INTERNAL_TOKEN_XYZ"),
+        "doctor must never dump raw user search queries:\n{report}"
+    );
+
+    // Health checks
+    assert!(report.contains("services/billing"), "must show relative cwd:\n{report}");
+    assert!(report.contains("broken.md") && report.contains("frontmatter 없음"), "must list skipped broken note:\n{report}");
+    assert!(report.contains(&active_id) && report.contains("중복"), "must detect duplicate note id:\n{report}");
+    assert!(report.contains("index.db") && report.contains("ok"), "must verify sqlite index integrity:\n{report}");
+    assert!(report.contains("~/.agents/skills/mistology/SKILL.md") && report.contains("최신"), "must report synced skill:\n{report}");
+    assert!(report.contains("~/.claude/skills/mistology/SKILL.md") && report.contains("갱신 필요"), "must detect drifted skill:\n{report}");
+    assert!(report.contains("events.jsonl"), "must summarize flight recorder stats:\n{report}");
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let mist = repo.path().join(".mistology");
+        for e in fs::read_dir(&mist).unwrap().flatten() {
+            if e.path().is_file() {
+                let _ = fs::set_permissions(e.path(), fs::Permissions::from_mode(0o444));
+            }
+        }
+        fs::set_permissions(&mist, fs::Permissions::from_mode(0o555)).unwrap();
+        let ro_report = mistology::run_cli(
+            &sub,
+            ["mistology", "doctor", "--home", &home_trailing],
+        )
+        .unwrap();
+        let _ = fs::set_permissions(&mist, fs::Permissions::from_mode(0o755));
+        for e in fs::read_dir(&mist).unwrap().flatten() {
+            if e.path().is_file() {
+                let _ = fs::set_permissions(e.path(), fs::Permissions::from_mode(0o644));
+            }
+        }
+        assert!(
+            ro_report.contains("- index.db: ok | schema=v3"),
+            "doctor must inspect persistent WAL index.db via immutable=1 even inside 0555 RO dir:\n{ro_report}"
+        );
+    }
 }
