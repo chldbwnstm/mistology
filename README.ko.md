@@ -77,7 +77,33 @@ https://github.com/chldbwnstm/mistology 를 설치하고(`cargo install --git ht
 
 `mistology setup`은 바이너리 안에 내장된 `SKILL.md`를 설치된 코딩 에이전트 폴더(`~/.claude`, `~/.gemini`, `~/.codex`, `~/.cursor`, `~/.agents`)에 직접 기록합니다. 클론 폴더를 남겨 둘 필요도, `/tmp` 심볼릭 링크가 깨질 걱정도 없으며, 프로젝트별 `init` 명령 없이 첫 오답 기록 시 `.mistology/notes/`와 `.mistology/.gitignore`가 자동 생성됩니다(팀 저장소 공유 스킬로 넣으려면 `mistology setup --project`를 시키면 됩니다).
 
-### 2. 기존 프로젝트 Git 버그 이력으로 첫 시딩 *(선택 · 저장소당 최초 1회)*
+### 2. 프로젝트 상시 강제 설정 — 규칙 & 훅 자동 연결 *(권장 · 저장소당 최초 1회)*
+
+스킬(`SKILL.md`)만 설치해 두면 에이전트가 필요성을 떠올릴 때만 호출하거나 서브에이전트에서 건너뛸 수 있습니다. 프로젝트 루트에서 아래 프롬프트를 붙여넣으면 **규칙 파일(`AGENTS.md` / `CLAUDE.md`)과 에이전트 훅까지 기존 설정을 해치지 않고 한 번에 세팅**해 줍니다:
+
+```text
+이 저장소에서 코딩 에이전트(서브에이전트 포함)가 항상 빠짐없이 `mistology`를 사용하도록 설정해줘:
+1. 기존 프로젝트 규칙 파일(`AGENTS.md`, `CLAUDE.md`, `.cursor/rules` 등)을 확인해 기존 규칙은 그대로 보존하면서 아래 MISTOLOGY 상시 규칙을 추가해줘:
+   - 작업 시작 전(프리플라이트): 파일 수정 전 반드시 `mistology search -b "<건드릴 파일, 심볼, 작업 요약>"`을 실행해 결합 모듈(`← ...`)을 먼저 확인할 것
+   - 에러 발생 시: 빌드·린트·테스트 실패 시 추측으로 고치기 전에 에러 메시지 원문으로 `mistology search -b`를 먼저 실행할 것
+   - 검증 후 기록: 실제 실패 증거와 검증된 해결책이 둘 다 확인됐을 때만 `--file`, `--symbol`, `--coupled`와 함께 `mistology new`(기존 정답이 깨진 경우 `mistology supersede <id>`)로 기록할 것
+2. Claude Code를 쓰는 환경이라면 전역 `~/.claude/settings.json`은 건드리지 말고, 프로젝트 로컬 `.claude/settings.json`의 기존 훅을 보존한 채 경량 훅을 병합해줘: `SessionStart`·`SubagentStart`에 MISTOLOGY 활성 안내를 주입해 서브에이전트도 빠지지 않게 하고, `UserPromptSubmit`·`PostToolUseFailure`에서 자동으로 `mistology search -b` 결과를 컨텍스트에 주입하되 `관련 오답노트 없음`이거나 실패해도 작업을 막지 않게 처리해줘.
+3. 만약 서브에이전트가 별도 git worktree에서 작업하는데 `.mistology`를 브랜치 커밋 대신 상위 워크스페이스 한곳에서 공유하는 구조라면, 노트가 워크트리마다 흩어지지 않도록 실행 경로를 상위 루트로 고정해줘.
+```
+
+<details>
+<summary><em>직접 규칙 파일에 복붙하고 싶다면? <code>AGENTS.md</code> / <code>CLAUDE.md</code>용 4줄 스니펫</em></summary>
+
+```markdown
+## MISTOLOGY (상시 적용)
+- **작업 시작 전**: 코드 수정 전 `mistology search -b "<수정할 파일·심볼·작업>"`을 실행해 결합 모듈(`← ...`)을 먼저 확인한다.
+- **에러 발생 시**: 빌드·테스트·런타임 에러를 고치기 전 에러 원문으로 `mistology search -b`를 먼저 실행한다.
+- **검증된 오답 기록**: 실제 틀린 증거와 검증된 해결책이 둘 다 확인되면 `--file`, `--symbol`, `--coupled`와 함께 `mistology new`(또는 `mistology supersede <id>`)로 남긴다.
+```
+
+</details>
+
+### 3. 기존 프로젝트 Git 버그 이력으로 첫 시딩 *(선택 · 저장소당 최초 1회)*
 
 이미 수개월 치 버그 수정 이력이 쌓인 프로젝트라면, 첫날 바로 과거의 숨은 결합 지뢰를 오답노트로 채울 수 있습니다:
 
@@ -85,7 +111,7 @@ https://github.com/chldbwnstm/mistology 를 설치하고(`cargo install --git ht
 이 저장소의 최근 git 커밋 중 실제 버그·되돌림·회귀 수정 이력만 살펴보고, 실패 원인과 함께 고쳐야 했던 결합 파일이 diff에서 명확히 확인되는 사례만 골라 mistology 오답노트로 초기 시딩해줘. (단순 기능 추가나 추측성 이력은 제외)
 ```
 
-### 3. 일상 개발 — 평소처럼 말만 걸면 끝 *(외울 플래그 0개)*
+### 4. 일상 개발 — 평소처럼 말만 걸면 끝 *(외울 플래그 0개)*
 
 스킬이 연결된 뒤에는 **사람이 `mistology` 명령어를 직접 칠 일이 없습니다.** 평소처럼 에이전트에게 지시하면 에이전트가 알아서 검색·기록·버전 진화를 수행합니다:
 
