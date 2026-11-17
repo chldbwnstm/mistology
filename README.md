@@ -1,5 +1,3 @@
-<div align="center">
-
 <img src="./assets/hero.svg" alt="MISTOLOGY — Project-Local Mistake Ontology for Coding Agents" width="100%" />
 
 <br />
@@ -13,30 +11,30 @@
 
 **English** · [**한국어 (Korean)**](./README.ko.md)
 
-</div>
-
 ---
+
+<br />
 
 <p align="center">
   <strong>
-    “AI-generated changes may each look reasonable on their own, yet as they accumulate, code doing the same work can be duplicated or components can clash.<br />
-    As this decoherence grows, changing even a single feature takes more and more time just to verify that nothing else broke.”
+    “AI-generated changes may each look reasonable on their own,<br />
+    yet as they accumulate, code can be duplicated or components can clash.<br />
+    As this decoherence grows, changing even a single feature<br />
+    takes more and more time just to verify that nothing else broke.”
   </strong>
 </p>
 
 <br />
 
+---
+
 **MISTOLOGY** is a single-binary Rust CLI and agent skill that turns verified mistakes in any repository into a **project-local ontology**.
 
 Instead of maintaining a monolithic `MISTAKES.md` that coding agents re-read from top to bottom on every prompt, MISTOLOGY stores small Git-tracked Markdown notes (`.mistology/notes/*.md`), indexes their explicit code relationships (`files`, `symbols`, `coupled`) in a disposable SQLite FTS5 + directed graph database, and surfaces **ultra-compact preflight briefings (`search -b`) or summary cards**—including **1-hop and 2-hop coupled hazards** across neighboring modules.
 
-<p align="center">
-  <a href="https://github.com/chldbwnstm/mistology/releases/latest/download/mistology-intro-en.mp4"><img src="./assets/mistology-intro-en.webp" width="100%" alt="MISTOLOGY 1-Minute Intro — Auto-playing overview (click for 1080p60 MP4 with audio)" /></a>
-</p>
-<p align="center">
-  <a href="https://github.com/chldbwnstm/mistology/releases/latest/download/mistology-intro-en.mp4"><strong>▶ Watch 1-Min Intro in 1080p60 with Audio (MP4)</strong></a> &nbsp; · &nbsp;
-  <a href="./README.ko.md">한국어 소개 · 영상 보기</a>
-</p>
+<a href="https://github.com/chldbwnstm/mistology/releases/latest/download/mistology-intro-en.mp4"><img src="./assets/mistology-intro-en.webp" width="100%" alt="MISTOLOGY 1-Minute Intro — Auto-playing overview (click for 1080p60 MP4 with audio)" /></a>
+
+[**▶ Watch 1-Min Intro in 1080p60 with Audio (MP4)**](https://github.com/chldbwnstm/mistology/releases/latest/download/mistology-intro-en.mp4) &nbsp; · &nbsp; [한국어 소개 · 영상 보기](./README.ko.md)
 
 <br />
 
