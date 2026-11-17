@@ -17,6 +17,15 @@
 
 ---
 
+<p align="center">
+  <strong>
+    “AI-generated changes may each look reasonable on their own, yet as they accumulate, code doing the same work can be duplicated or components can clash.<br />
+    As this decoherence grows, changing even a single feature takes more and more time just to verify that nothing else broke.”
+  </strong>
+</p>
+
+<br />
+
 **MISTOLOGY** is a single-binary Rust CLI and agent skill that turns verified mistakes in any repository into a **project-local ontology**.
 
 Instead of maintaining a monolithic `MISTAKES.md` that coding agents re-read from top to bottom on every prompt, MISTOLOGY stores small Git-tracked Markdown notes (`.mistology/notes/*.md`), indexes their explicit code relationships (`files`, `symbols`, `coupled`) in a disposable SQLite FTS5 + directed graph database, and surfaces **ultra-compact preflight briefings (`search -b`) or summary cards**—including **1-hop and 2-hop coupled hazards** across neighboring modules.
