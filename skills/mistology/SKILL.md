@@ -1,37 +1,35 @@
 ---
 name: mistology
-description: 프로젝트 오답 온톨로지. 작업을 시작할 때와 에러가 났을 때 이 프로젝트의 연결된 오답 요약 카드를 검색하고, 내 실수와 정답이 둘 다 확인됐을 때(테스트 실패→수정 후 통과, 사용자 정정, 되돌리고 다른 방법으로 해결) 결합 관계(--file, --symbol, --coupled)와 함께 오답노트를 남긴다. Use at the start of a task, when an error occurs, and after confirming the fix for your own mistake.
+description: 프로젝트 오답·정합성 온톨로지. 작업 시작·공유 헬퍼 작성 전과 에러 발생 시 연결된 오답·표준 규약(★표준)을 검색하고, 완료 전 impact로 결합 파급을 점검하며, 검증된 오답(new)이나 재사용 표준 규약(canon)을 남긴다. Use at task start, before creating shared helpers, on errors, before completion (`impact`), and after verifying fixes or canonical contracts.
 ---
 
-# MISTOLOGY: 프로젝트 오답 온톨로지
+# MISTOLOGY: 프로젝트 오답 · 정합성 온톨로지
 
-이 프로젝트에서 실제로 틀렸던 것과 코드 간 숨은 결합만 모은다. 노트 원본은 `<프로젝트 루트>/.mistology/notes/*.md`(git 커밋)이고, 검색·그래프 인덱스 `.mistology/index.db`는 git에서 빠지며 지워져도 다음 검색 때 자동 재생성된다.
+이 프로젝트에서 실제로 틀렸던 지뢰, 재사용해야 할 표준 진입점(`★표준`), 코드 간 숨은 결합만 모은다. 노트 원본은 `<프로젝트 루트>/.mistology/notes/*.md`(git 커밋)이고, 검색·그래프 인덱스 `.mistology/index.db`는 git에서 빠지며 지워져도 자동 재생성된다.
 
-## 1. 찾기 (초압축 브리핑 `-b` · 요약 카드 우선)
+## 1. 찾기 (`search -b`) & 완료 전 파급 점검 (`impact`)
 
-- **작업 시작할 때(프리플라이트):** 건드릴 모든 파일·심볼과 작업 설명을 **한 번에** 묶어 `-b`(`--brief`)로 검색한다.
-  `mistology search -b "로그인 토큰 수정 src/auth/token.ts"`
-- **에러가 났을 때:** 고치기 전에 에러 메시지를 그대로 넣어 검색한다.
-  `mistology search -b "TS2345: Argument of type 'string' is not assignable"`
-- `-b` 출력은 단 1번 호출로 직접 노트와 1-hop·2-hop 단방향 결합 사슬(`← ...`)까지 **초압축 브리핑 최대 6개**(`정답`, `피할 오답`)만 내보낸다.
-  - **`정답`(또는 기본 카드의 `현재 정답`·`다음에는`)만 따른다.** `피할 오답`은 이미 틀린 길이니 절대 반복하지 않는다.
-  - `← ...`(또는 `[연결: ... 경유]`)가 붙은 항목은 내가 건드릴 파일과 결합된 이웃·연쇄 모듈의 지뢰다. import가 없어도 반드시 함께 확인·수정한다.
-  - 문제 설명·다음 행동까지 담긴 일반 요약 카드가 필요하면 `-b` 없이 `mistology search "..."`(기본 최대 3개), 과거 스택트레이스 전문이 꼭 필요할 때만 `mistology search [-k N] --full "..."`(옵션은 검색어 앞에)을 쓴다.
-- `관련 오답노트 없음`이면 바로 진행한다.
+- **작업 시작 · 새 헬퍼 작성 전(프리플라이트):** 건드릴 파일·심볼과 **수행하려는 기능어**를 한 번에 묶어 `-b`(`--brief`)로 검색한다.
+  `mistology search -b "경로 정규화 로그인 토큰 src/auth/token.ts"`
+  - `★표준`(`표준 규약`)이 나오면 새 함수를 중복 구현하지 말고 명시된 표준 파일·심볼을 재사용한다. 검색 결과가 비어 있으면 코드베이스에 기존 구현이 없는지 먼저 확인한 뒤 새로 작성한다.
+  - **`정답`·`표준 규약`만 따르고**, `금지`·`피할 오답`·`피할 구규약`은 절대 반복하지 않는다.
+  - `← ...`(또는 `[연결: ... 경유]`)가 붙은 항목은 결합된 이웃·연쇄 모듈이다. import가 없어도 **계약 호환성을 확인하고 관련 테스트를 실행한다**(필요 시 함께 수정).
+- **에러가 났을 때:** 추측으로 고치기 전에 에러 메시지 원문을 그대로 넣어 `mistology search -b "<에러>"`로 검색한다.
+- **작업 완료 · 커밋 전(파급 점검):** 파일을 수정한 뒤 끝내기 전에 `mistology impact`를 실행해 변경 파일과 양방향 1-hop으로 묶인 `[미수정 결합 파일]`·`[결합 심볼]`의 계약과 테스트가 빠지지 않았는지 확인한다.
+- 일반 요약 카드는 `-b` 없이 `mistology search "..."`, 전문이 꼭 필요할 때만 `mistology search [-k N] --full "..."`를 쓴다.
 
-## 2. 쓰기 (고정 관계 스키마로 연결성 남기기)
+## 2. 쓰기 (`new` · `canon` · `supersede`)
 
-**틀렸다는 증거와 정답의 확인 근거가 둘 다 있을 때만 쓴다.** 추측으로 쓰지 않는다.
+**검증된 사실만 기록한다.** 추측이나 일반론은 쓰지 않으며, 쓰기 전에 먼저 `search -b`로 중복 여부를 확인한다.
 
-쓰기 전에 에러 메시지와 파일 경로로 먼저 `search` 한다.
-
-| 검색 결과 | 할 일 |
+| 상황 | 할 일 |
 |---|---|
-| 같은 문제 노트가 없다 | `mistology new` |
-| 같은 문제인데, 그 노트의 현재 정답이 틀렸다 | `mistology supersede <노트 id>` |
-| 같은 문제이고, 현재 정답대로 하니 풀렸다 | 쓰지 않는다 (이미 기록됨) |
+| 실제 에러·실패를 겪고 수정해 검증까지 마쳤다 (기존 노트 없음) | `mistology new` |
+| 다른 세션이 중복 구현하거나 어기면 충돌하는 **공유 표준 진입점(SSOT)·불변 계약**을 확립·검증했다 | `mistology canon` |
+| 기존 오답노트나 표준 규약의 현재 정답/규약이 바뀌어 깨졌다 | `mistology supersede <노트 id>` |
+| 규약은 그대로인데 파일 경로만 이동(rename)됐다 / 코드가 삭제돼 폐기됐다 | 해당 노트 frontmatter 경로만 갱신 / `status: retired`로 변경 |
 
-### 새 문제 (`new`)
+### 새 오답 기록 (`new`)
 
 ```bash
 mistology new \
@@ -49,27 +47,40 @@ mistology new \
   --tag auth
 ```
 
-### 현재 정답이 틀렸을 때 (`supersede`)
+### 표준 진입점 · 불변 계약 등록 (`canon`)
+
+```bash
+mistology canon \
+  --intent "어떤 기능·역할을 수행할 때 이 규약을 써야 하는가" \
+  --contract "반드시 재사용할 표준 함수·모듈과 지켜야 할 계약" \
+  --verified "확인된 테스트나 실제 사용처 근거" \
+  --forbid "금지할 중복 구현이나 위반 패턴" \
+  --signature "대표 심볼명 핵심 도메인 구문" \
+  --file src/paths/rebase.rs \
+  --symbol rebase_cwd_paths \
+  --coupled src/cli/entry.rs \
+  --tag path
+```
+
+### 기존 정답 · 표준 규약 갱신 (`supersede`)
 
 ```bash
 mistology supersede 2026-11-11-001 \
-  --evidence "지금 현재 정답이 틀린 증거" \
+  --evidence "기존 정답/규약이 깨진 증거" \
   --why "바뀌어서 틀려짐: 원인" \
-  --fix "새 정답" \
+  --fix "새 정답 또는 새 표준 규약" \
   --verified "확인 근거" \
   --next "다음에는 ..." \
-  --signature "새로 나온 에러 메시지" \
+  --forbid "새 버전에도 금지할 패턴이 있으면 명시 (생략 시 이전 금지 미상속)" \
+  --signature "새로 나온 에러 메시지나 식별 구문" \
   --coupled src/새로_밝혀진_결합파일.ts
 ```
 
 ### 규칙
 
-- `--signature`는 필수(`new`). 에러 메시지는 요약하지 말고 **그대로** 넣는다(에러 문자열이 없으면 함수명·설정 키).
-- **연결성 기록(`--file`, `--symbol`, `--coupled`)**: 직접 수정한 파일은 `--file`, 핵심 함수·타입·환경변수는 `--symbol`, **"이걸 바꿀 때 같이 안 맞춰서 터진 다른 파일·심볼"**은 반드시 `--coupled`에 넣는다. 이 값이 노트들을 1-hop·2-hop 온톨로지로 묶어 준다 (`--file`·`--coupled` 파일은 `src/workers/webhook.py`처럼 저장소 루트 상대 경로를 권장하되 유일한 파일명도 자동 연결됨).
-- `--why`는 `처음부터 틀림:` 또는 `바뀌어서 틀려짐:`으로 시작한다.
-- 옛 방법으로 되돌리는 것도 `supersede`로 새 버전을 붙인다.
-- 관련 코드가 사라져 더 이상 유효하지 않은 노트만 frontmatter의 `status: active`를 `status: retired`로 바꾼다.
-- 노트를 쓰거나 바꾸면 `.mistology/notes/`의 파일을 작업 커밋에 함께 포함한다.
+- `new`의 `--signature`에는 에러 메시지 원문을 그대로 넣고, `canon`의 `--signature`에는 좁고 명확한 대표 심볼·식별 구문만 넣는다(`canon`은 실존 `--file`과 `--symbol` 최소 1개 필수).
+- 직접 구현·수정한 파일은 `--file`, 핵심 함수·타입·키는 `--symbol`, 함께 계약을 맞춰야 하는 다른 파일·심볼은 `--coupled`에 넣는다.
+- `--why`는 `처음부터 틀림:` 또는 `바뀌어서 틀려짐:`으로 시작한다. 노트를 쓰거나 바꾸면 `.mistology/notes/`를 커밋에 함께 포함한다.
 
 ## 3. 기존 프로젝트 초기 시딩 (요청 시)
 

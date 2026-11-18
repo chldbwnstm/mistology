@@ -4,7 +4,7 @@
 
 [![Language: Rust](https://img.shields.io/badge/Rust-2021_Edition-F74C00?style=flat-square&logo=rust&logoColor=white)](./Cargo.toml)
 [![Engine: SQLite FTS5 + 2-Hop Graph](https://img.shields.io/badge/Index-SQLite_FTS5_%2B_2--Hop_Graph-0284C7?style=flat-square&logo=sqlite&logoColor=white)](./src/index.rs)
-[![Evals: 52/52 + 23 Unit](https://img.shields.io/badge/Tests-75%2F75_%28100%25%29-10B981?style=flat-square)](./tests/hardening_evals.rs)
+[![Evals: 52/52 + 26 Unit](https://img.shields.io/badge/Tests-78%2F78_%28100%25%29-10B981?style=flat-square)](./tests/hardening_evals.rs)
 [![OSS Benchmark: 3x-297x](https://img.shields.io/badge/vs_OSS_Memory-3x--297x_Win-0EA5E9?style=flat-square)](#오픈소스-에이전트-메모리-4자-비교-벤치마크-3배-이상-우위)
 [![Runtime Deps: Zero](https://img.shields.io/badge/Runtime_Deps-Zero_%28Single_Binary%29-7C3AED?style=flat-square)](./Cargo.toml)
 [![License: MIT OR Apache-2.0](https://img.shields.io/badge/License-MIT_OR_Apache--2.0-F59E0B?style=flat-square)](./LICENSE-MIT)
@@ -52,6 +52,7 @@
 | **다단계 숨은 결합 폭발** — `currency.py`를 고쳤는데 `settlement.py`를 거쳐 2단계 뒤의 `csv_export.py` 정밀도까지 연쇄적으로 깨집니다. | **단조 방향성 2-Hop 결합 그래프 (`--coupled`)** — `currency.py` 한 번 검색으로 `1-hop`·`2-hop` 결합 사슬을 ~4 ms 만에 포착하되, 형제 역류·허브 오염은 차단합니다. |
 | **옛날 해결책과 새 해결책 혼재** — 코드가 바뀐 뒤에도 폐기된 우회책(`v1`, `v2`)이 최신 정답(`v3`) 옆에 섞여 에이전트를 오도합니다. | **버전 누적 (`supersede`)** — 같은 노트에 `v3`, `v4`를 쌓고 폐기된 시도는 정답 토큰을 뺀 고유 오답 스팬만 `피할 오답`으로 격리합니다. |
 | **검증 안 된 추측 오염** — 디버깅 도중 쏟아진 가설을 자동 저장하면 틀린 원인 분석이 다음 세션을 오염시킵니다. | **검증 게이트** — 실제 실패 증거(`--evidence`)와 통과 근거(`--verified`)가 모두 있어야만 기록되며 중복 `signature`를 자동 차단합니다. |
+| **세션 간 중복 코드 & 첫 계약 충돌** — 이미 표준 헬퍼가 있는데도 다음 에이전트가 비슷한 함수를 중복 구현하거나 변경 후 결합 파일 점검을 빼먹습니다. | **정합성 리드 (`canon` · `impact` · `doctor`)** — 재사용 표준 진입점(`★표준`)을 사전 안내하고, 완료 전 `mistology impact`가 `git diff` 기준 양방향 1-hop 누락 대상을 짚어주며, `doctor`가 사라진 참조 파일 괴리를 탐지합니다. |
 
 ---
 
@@ -91,9 +92,10 @@ https://github.com/chldbwnstm/mistology 를 설치하고(`cargo install --git ht
 ```text
 이 저장소에서 코딩 에이전트(서브에이전트 포함)가 항상 빠짐없이 `mistology`를 사용하도록 설정해줘:
 1. 기존 프로젝트 규칙 파일(`AGENTS.md`, `CLAUDE.md`, `.cursor/rules` 등)을 확인해 기존 규칙은 그대로 보존하면서 아래 MISTOLOGY 상시 규칙을 추가해줘:
-   - 작업 시작 전(프리플라이트): 파일 수정 전 반드시 `mistology search -b "<건드릴 파일, 심볼, 작업 요약>"`을 실행해 결합 모듈(`← ...`)을 먼저 확인할 것
+   - 작업 시작 전(프리플라이트): 파일 수정이나 공유 헬퍼 작성 전 반드시 `mistology search -b "<건드릴 파일, 심볼, 기능 요약>"`을 실행해 표준 규약(`★표준`)과 결합 모듈(`← ...`)을 먼저 확인할 것
    - 에러 발생 시: 빌드·린트·테스트 실패 시 추측으로 고치기 전에 에러 메시지 원문으로 `mistology search -b`를 먼저 실행할 것
-   - 검증 후 기록: 실제 실패 증거와 검증된 해결책이 둘 다 확인됐을 때만 `--file`, `--symbol`, `--coupled`와 함께 `mistology new`(기존 정답이 깨진 경우 `mistology supersede <id>`)로 기록할 것
+   - 완료 전 파급 점검: 코드 수정 후 종료·커밋 전에 `mistology impact`를 실행해 변경 파일과 결합된 대상의 계약·테스트를 확인할 것
+   - 검증 후 기록: 검증된 실패·해결은 `mistology new`, 재사용 표준 진입점·불변 계약은 `mistology canon`, 기존 규약 변경은 `mistology supersede <id>`로 `--file`, `--symbol`, `--coupled`와 함께 기록할 것
 2. Claude Code를 쓰는 환경이라면 전역 `~/.claude/settings.json`은 건드리지 말고, 프로젝트 로컬 `.claude/settings.json`의 기존 훅을 보존한 채 경량 훅을 병합해줘: `SessionStart`·`SubagentStart`에 MISTOLOGY 활성 안내를 주입해 서브에이전트도 빠지지 않게 하고, `UserPromptSubmit`·`PostToolUseFailure`에서 자동으로 `mistology search -b` 결과를 컨텍스트에 주입하되 `관련 오답노트 없음`이거나 실패해도 작업을 막지 않게 처리해줘.
 3. 만약 서브에이전트가 별도 git worktree에서 작업하는데 `.mistology`를 브랜치 커밋 대신 상위 워크스페이스 한곳에서 공유하는 구조라면, 노트가 워크트리마다 흩어지지 않도록 실행 경로를 상위 루트로 고정해줘.
 ```
@@ -212,6 +214,27 @@ mistology supersede 2026-11-11-003 \
 
 관련 모듈이 완전히 삭제되어 더 이상 유효하지 않은 노트는 frontmatter의 `status: active`를 `status: retired`로 바꾸면 이력은 보존하면서 검색 결과에서만 제외됩니다.
 
+#### 표준 진입점(SSOT) · 불변 계약 등록 (`canon`) 및 파급 점검 (`impact`)
+
+에러가 터지기 전이라도 세션 간 중복 구현과 첫 계약 충돌을 막는 **표준 진입점(`★표준`)**을 등록하고, 커밋 전 `git diff` 파급 범위를 점검합니다:
+
+```bash
+# 공유 헬퍼·불변 계약을 ★표준 노트로 등록 (실존 --file 및 --symbol 필수)
+mistology canon \
+  --intent "저장소 상대경로 정규화 및 호스트 루트 접두사 제거" \
+  --contract "경로 정규화는 반드시 src/note.rs의 rebase_cwd_paths를 재사용할 것" \
+  --verified "cargo test --test mistology 통과" \
+  --forbid "모듈별로 임의 strip_prefix 경로 파서를 중복 구현하지 말 것" \
+  --signature "rebase_cwd_paths repo_root_prefixes" \
+  --file src/note.rs \
+  --symbol rebase_cwd_paths \
+  --coupled src/lib.rs
+
+# 현재 Git 변경 파일(staged/unstaged/untracked) 또는 기준 브랜치 대비 양방향 1-hop 결합 대상 점검
+mistology impact
+mistology impact --base HEAD~1
+```
+
 #### 진단 및 디버깅 (`--explain` · `doctor` · `events.jsonl`)
 
 ```bash
@@ -257,7 +280,7 @@ tail -n 20 .mistology/events.jsonl
 
 ---
 
-## 정량 평가 스위트 (`52 / 52` + 단위 테스트 `23`개)
+## 정량 평가 스위트 (`52 / 52` + 단위 테스트 `26`개)
 
 성격이 다른 **3개 언어·구조 검증 프로젝트**([`evals/shopcore`](./evals/shopcore) Python 12모듈 백엔드, [`evals/webmono`](./evals/webmono) TypeScript/Next.js 모노레포, [`evals/rustkv`](./evals/rustkv) Rust Cargo 워크스페이스)와 **총 52개 자동 시나리오**([`tests/evals.rs`](./tests/evals.rs), [`tests/hardening_evals.rs`](./tests/hardening_evals.rs))가 포함되어 있습니다.
 
@@ -283,10 +306,11 @@ python3 -B -m unittest discover -s evals/shopcore/tests -t evals/shopcore -v
 ├── assets/                   # 커스텀 벡터 SVG 및 자동 재생 프리뷰 WebP
 ├── src/
 │   ├── main.rs               # 바이너리 엔트리포인트
-│   ├── lib.rs                # CLI 서브커맨드 (search, new, supersede, setup, doctor) 및 모노레포 경로 보정
-│   ├── diag.rs               # 256 KiB 자동 로테이션 비행기록장치(events.jsonl) 및 비공개 경로 보호 doctor
-│   ├── note.rs               # 마크다운 + frontmatter 파서, 병합 충돌 방어, 버전 누적
-│   └── index.rs              # SQLite WAL + FTS5 + 단방향 1/2-hop 온톨로지 그래프, --explain 및 포매터
+│   ├── lib.rs                # CLI 서브커맨드 (search, new, canon, supersede, impact, setup, doctor)
+│   ├── impact.rs             # Git 변경분(-z) 수집 및 1-hop 양방향 결합 파급 점검기
+│   ├── diag.rs               # 256 KiB 자동 로테이션(events.jsonl), 경로 비식별화 및 파일 드리프트 doctor
+│   ├── note.rs               # 마크다운 + frontmatter 파서(mistake/canon), 병합 충돌 방어, 버전 누적
+│   └── index.rs              # SQLite WAL + FTS5 + 1/2-hop 온톨로지 그래프, --explain 및 포매터
 ├── skills/mistology/
 │   └── SKILL.md              # 에이전트 스킬 정의서 (Claude, Codex, Gemini/AGY, Cursor)
 ├── evals/
@@ -295,7 +319,7 @@ python3 -B -m unittest discover -s evals/shopcore/tests -t evals/shopcore -v
 │   ├── webmono/              # TypeScript/Next.js 모노레포 + 6개 오답 노트 픽스처
 │   └── rustkv/               # Rust Cargo 워크스페이스 + 6개 오답 노트 픽스처
 └── tests/
-    ├── mistology.rs          # 단위·진단·엣지 케이스 회귀 테스트 (23개)
+    ├── mistology.rs          # 단위·정합성(canon/impact/drift)·진단 회귀 테스트 (26개)
     ├── evals.rs              # 핵심 검색·토큰 절감 정량 벤치마크 (24개 시나리오)
     └── hardening_evals.rs    # 다중 스택·스택트레이스·충돌·샌드박스·동시성 벤치마크 (28개 시나리오)
 ```

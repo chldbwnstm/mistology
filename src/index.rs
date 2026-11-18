@@ -6,7 +6,7 @@ use std::path::{Path, PathBuf};
 use std::time::{SystemTime, UNIX_EPOCH};
 use unicode_normalization::UnicodeNormalization;
 
-pub const SCHEMA_VERSION: i32 = 3;
+pub const SCHEMA_VERSION: i32 = 4;
 
 const SCHEMA: &str = "
 CREATE VIRTUAL TABLE IF NOT EXISTS notes_fts USING fts5(
@@ -19,6 +19,7 @@ CREATE TABLE IF NOT EXISTS cards (
     ctime INTEGER NOT NULL,
     size INTEGER NOT NULL,
     hash INTEGER NOT NULL,
+    kind TEXT NOT NULL DEFAULT 'mistake',
     status TEXT NOT NULL,
     current TEXT NOT NULL,
     wrong INTEGER NOT NULL,
@@ -26,6 +27,7 @@ CREATE TABLE IF NOT EXISTS cards (
     fix TEXT NOT NULL,
     next_step TEXT NOT NULL,
     pitfalls TEXT NOT NULL,
+    forbid TEXT NOT NULL DEFAULT '',
     files TEXT NOT NULL,
     symbols TEXT NOT NULL,
     coupled TEXT NOT NULL
@@ -77,12 +79,14 @@ const PATH_PREFIXES: &[&str] = &[
 pub struct SearchHit {
     pub id: String,
     pub path: PathBuf,
+    pub kind: String,
     pub current: String,
     pub wrong: i64,
     pub problem: String,
     pub fix: String,
     pub next_step: String,
     pub pitfalls: String,
+    pub forbid: String,
     pub files: String,
     pub symbols: String,
     pub coupled: String,
@@ -585,11 +589,18 @@ fn resolve_entity(conn: &Connection, raw_ent: &str) -> rusqlite::Result<String> 
 fn strip_chrome(body: &str) -> String {
     let mut out = Vec::new();
     for line in body.lines() {
-        if line == "## 문제 상황" || (line.starts_with("## v") && line.contains(") ")) {
+        if line == "## 문제 상황" || line == "## 의도" || (line.starts_with("## v") && line.contains(") ")) {
             continue;
         }
         let mut content = line;
-        for prefix in ["- 한 것: ", "- 틀린 증거: ", "- 왜 틀렸나: ", "- 확인 근거: ", "- 다음에는: "] {
+        for prefix in [
+            "- 한 것: ",
+            "- 틀린 증거: ",
+            "- 왜 틀렸나: ",
+            "- 확인 근거: ",
+            "- 다음에는: ",
+            "- 금지: ",
+        ] {
             if let Some(rest) = content.strip_prefix(prefix) {
                 content = rest
                     .strip_prefix("처음부터 틀림:")
@@ -659,13 +670,13 @@ fn sync(conn: &mut Connection, d: &Path) -> rusqlite::Result<()> {
         .unwrap_or(0);
 
     let mut on_disk: HashMap<String, DiskStat> = HashMap::new();
-    if let Ok(entries) = fs::read_dir(d) {
-        for e in entries.flatten() {
-            let p = e.path();
-            if p.extension().and_then(|s| s.to_str()) == Some("md") {
-                if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
-                    on_disk.insert(name.to_string(), disk_stat(&p));
-                }
+    let entries = fs::read_dir(d).map_err(|e| rusqlite::Error::ToSqlConversionFailure(Box::new(e)))?;
+    for entry_res in entries {
+        let e = entry_res.map_err(|err| rusqlite::Error::ToSqlConversionFailure(Box::new(err)))?;
+        let p = e.path();
+        if p.extension().and_then(|s| s.to_str()) == Some("md") {
+            if let Some(name) = p.file_name().and_then(|s| s.to_str()) {
+                on_disk.insert(name.to_string(), disk_stat(&p));
             }
         }
     }
@@ -709,11 +720,6 @@ fn sync(conn: &mut Connection, d: &Path) -> rusqlite::Result<()> {
         }
     }
     for name in &changed {
-        if let Some(old) = indexed.get(name) {
-            tx.execute("DELETE FROM notes_fts WHERE id = ?1", params![old.id])?;
-            tx.execute("DELETE FROM cards WHERE id = ?1", params![old.id])?;
-            tx.execute("DELETE FROM edges WHERE note_id = ?1", params![old.id])?;
-        }
         let note_path = d.join(name);
         let raw_bytes = match fs::read(&note_path) {
             Ok(b) => b,
@@ -722,6 +728,11 @@ fn sync(conn: &mut Connection, d: &Path) -> rusqlite::Result<()> {
                 continue;
             }
         };
+        if let Some(old) = indexed.get(name) {
+            tx.execute("DELETE FROM notes_fts WHERE id = ?1", params![old.id])?;
+            tx.execute("DELETE FROM cards WHERE id = ?1", params![old.id])?;
+            tx.execute("DELETE FROM edges WHERE note_id = ?1", params![old.id])?;
+        }
         let (meta, body) = match std::str::from_utf8(&raw_bytes)
             .map_err(|e| e.to_string())
             .and_then(parse_note)
@@ -759,7 +770,10 @@ fn sync(conn: &mut Connection, d: &Path) -> rusqlite::Result<()> {
             expand_subwords(&clean_body),
         ])?;
         tx.prepare_cached(
-            "INSERT OR REPLACE INTO cards VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+            "INSERT OR REPLACE INTO cards (
+                id, filename, mtime, ctime, size, hash, kind, status, current, wrong,
+                problem, fix, next_step, pitfalls, forbid, files, symbols, coupled
+             ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16, ?17, ?18)",
         )?
         .execute(params![
             note_id,
@@ -768,6 +782,7 @@ fn sync(conn: &mut Connection, d: &Path) -> rusqlite::Result<()> {
             st.ctime,
             st.size,
             hash,
+            meta.kind,
             meta.status,
             meta.current,
             wrong,
@@ -775,6 +790,7 @@ fn sync(conn: &mut Connection, d: &Path) -> rusqlite::Result<()> {
             summary.fix,
             summary.next_step,
             summary.pitfalls,
+            summary.forbid,
             meta.files.join(", "),
             meta.symbols.join(", "),
             meta.coupled.join(", "),
@@ -911,23 +927,25 @@ fn score_fts_candidates(
     }
     let n_docs = active_docs as f64;
 
+    type RawFtsRow = (String, i64, String, [Vec<String>; 4]);
     let mut stmt = conn.prepare(
-        "SELECT c.id, c.wrong,
+        "SELECT c.id, c.wrong, c.kind,
                 notes_fts.signatures, notes_fts.entities, notes_fts.tags, notes_fts.body
          FROM notes_fts
          JOIN cards c ON c.id = notes_fts.id
          WHERE notes_fts MATCH ?1 AND c.status = 'active'",
     )?;
-    let raw_rows: Vec<(String, i64, [Vec<String>; 4])> = stmt
+    let raw_rows: Vec<RawFtsRow> = stmt
         .query_map(params![plan.fts_query], |r| {
             Ok((
                 r.get::<_, String>(0)?,
                 r.get::<_, i64>(1)?,
+                r.get::<_, String>(2)?,
                 [
-                    tokenize_fts(&r.get::<_, String>(2)?),
                     tokenize_fts(&r.get::<_, String>(3)?),
                     tokenize_fts(&r.get::<_, String>(4)?),
                     tokenize_fts(&r.get::<_, String>(5)?),
+                    tokenize_fts(&r.get::<_, String>(6)?),
                 ],
             ))
         })?
@@ -942,7 +960,7 @@ fn score_fts_candidates(
     let mut df = vec![0usize; slot_len];
     let mut row_tfs: Vec<[Vec<usize>; 4]> = Vec::with_capacity(raw_rows.len());
 
-    for (_, _, cols) in &raw_rows {
+    for (_, _, _, cols) in &raw_rows {
         let mut col_tf: [Vec<usize>; 4] = [
             vec![0; slot_len],
             vec![0; slot_len],
@@ -998,7 +1016,7 @@ fn score_fts_candidates(
         })
         .collect();
 
-    for ((id, wrong, cols), col_tf) in raw_rows.into_iter().zip(row_tfs) {
+    for ((id, wrong, kind, cols), col_tf) in raw_rows.into_iter().zip(row_tfs) {
         let mut raw_score = 0.0f64;
         let mut struct_score = 0.0f64;
         for ci in 0..4 {
@@ -1023,6 +1041,13 @@ fn score_fts_candidates(
             let matched_body_words = (0..plan.words.len())
                 .filter(|&wi| col_tf[3][wi * 2] > 0 || col_tf[3][wi * 2 + 1] > 0)
                 .count();
+            if kind == "canon"
+                && !has_structured
+                && matched_body_words < 2
+                && (plan.words.len() >= 2 || !plan.entities.is_empty())
+            {
+                continue;
+            }
             scores.insert(id, Candidate { score, via: None, has_structured, matched_body_words });
         }
     }
@@ -1455,7 +1480,7 @@ fn query_conn(
 
     let mut hits = Vec::with_capacity(ranked.len());
     let mut card_stmt = conn.prepare(
-        "SELECT filename, current, wrong, problem, fix, next_step, pitfalls, files, symbols, coupled
+        "SELECT filename, kind, current, wrong, problem, fix, next_step, pitfalls, forbid, files, symbols, coupled
          FROM cards WHERE id = ?1",
     )?;
     for (id, raw_sc, via) in ranked {
@@ -1464,15 +1489,17 @@ fn query_conn(
             Ok(SearchHit {
                 id: id.clone(),
                 path: d.join(filename),
-                current: r.get(1)?,
-                wrong: r.get(2)?,
-                problem: r.get(3)?,
-                fix: r.get(4)?,
-                next_step: r.get(5)?,
-                pitfalls: r.get(6)?,
-                files: r.get(7)?,
-                symbols: r.get(8)?,
-                coupled: r.get(9)?,
+                kind: r.get(1)?,
+                current: r.get(2)?,
+                wrong: r.get(3)?,
+                problem: r.get(4)?,
+                fix: r.get(5)?,
+                next_step: r.get(6)?,
+                pitfalls: r.get(7)?,
+                forbid: r.get(8)?,
+                files: r.get(9)?,
+                symbols: r.get(10)?,
+                coupled: r.get(11)?,
                 via: via.clone(),
             })
         })?;
@@ -1606,22 +1633,14 @@ fn run_search_internal(
     let hits = match query_index(&index_path, &d, &plan, trace.as_deref_mut()) {
         Ok(hits) => hits,
         Err(rusqlite::Error::SqliteFailure(err, _))
-            if matches!(err.code, rusqlite::ErrorCode::DatabaseBusy | rusqlite::ErrorCode::DatabaseLocked) =>
+            if matches!(
+                err.code,
+                rusqlite::ErrorCode::DatabaseCorrupt | rusqlite::ErrorCode::NotADatabase
+            ) =>
         {
-            query_in_memory(&d, &plan, trace.as_deref_mut()).unwrap_or_else(|_| {
-                if let Some(tr) = trace {
-                    tr.clear();
-                }
-                Vec::new()
-            })
-        }
-        Err(_) => {
-            if let Ok(entries) = fs::read_dir(root.join(".mistology")) {
-                for e in entries.flatten() {
-                    if e.file_name().to_string_lossy().starts_with("index.db") {
-                        let _ = fs::remove_file(e.path());
-                    }
-                }
+            let mist_dir = root.join(".mistology");
+            for sidecar in ["index.db", "index.db-wal", "index.db-shm", "index.db-journal"] {
+                let _ = fs::remove_file(mist_dir.join(sidecar));
             }
             match query_index(&index_path, &d, &plan, trace.as_deref_mut()) {
                 Ok(hits) => hits,
@@ -1633,6 +1652,12 @@ fn run_search_internal(
                 }),
             }
         }
+        Err(_) => query_in_memory(&d, &plan, trace.as_deref_mut()).unwrap_or_else(|_| {
+            if let Some(tr) = trace {
+                tr.clear();
+            }
+            Vec::new()
+        }),
     };
     (hits, words, query_entities, rel_cwd, require_multi_body)
 }
@@ -1731,15 +1756,42 @@ pub fn format_card(root: &Path, h: &SearchHit) -> String {
         .to_string_lossy()
         .replace('\\', "/");
     let via_tag = h.via.as_deref().map(|v| format!(" | 연결: {v} 경유")).unwrap_or_default();
-    let mut lines = vec![
-        format!("# {rel} [{} | 오답 {}회{via_tag}]", h.current, h.wrong),
-        format!("- 문제: {}", h.problem),
-        format!("- 현재 정답: {}", h.fix),
-        format!("- 다음에는: {}", h.next_step),
-    ];
-    if !h.pitfalls.is_empty() {
-        lines.push(format!("- 피할 오답: {}", h.pitfalls));
-    }
+    let mut lines = if h.kind == "canon" {
+        let rev_tag = if h.wrong > 0 {
+            format!(" · 개정 {}회", h.wrong)
+        } else {
+            String::new()
+        };
+        let mut base = vec![
+            format!("# {rel} [{} | 표준 규약{rev_tag}{via_tag}]", h.current),
+            format!("- 의도: {}", h.problem),
+            format!("- 표준 규약: {}", h.fix),
+        ];
+        if !h.next_step.is_empty() {
+            base.push(format!("- 다음에는: {}", h.next_step));
+        }
+        if !h.forbid.is_empty() {
+            base.push(format!("- 금지: {}", h.forbid));
+        }
+        if !h.pitfalls.is_empty() {
+            base.push(format!("- 피할 구규약: {}", h.pitfalls));
+        }
+        base
+    } else {
+        let mut base = vec![
+            format!("# {rel} [{} | 오답 {}회{via_tag}]", h.current, h.wrong),
+            format!("- 문제: {}", h.problem),
+            format!("- 현재 정답: {}", h.fix),
+            format!("- 다음에는: {}", h.next_step),
+        ];
+        if !h.forbid.is_empty() {
+            base.push(format!("- 금지: {}", h.forbid));
+        }
+        if !h.pitfalls.is_empty() {
+            base.push(format!("- 피할 오답: {}", h.pitfalls));
+        }
+        base
+    };
     let mut links = Vec::new();
     if !h.files.is_empty() {
         links.push(format!("files=[{}]", h.files));
@@ -1899,19 +1951,25 @@ pub fn format_brief(h: &SearchHit) -> String {
     } else {
         String::new()
     };
+    let kind_badge = if h.kind == "canon" { " ★표준" } else { "" };
+    let rule_label = if h.kind == "canon" { "표준 규약" } else { "정답" };
     let fix_line = if h.fix.chars().count() < 48 && !h.next_step.is_empty() && h.next_step != h.fix {
-        format!("- 정답: {} ({})", h.fix, truncate_chars(&h.next_step, 72))
+        format!("- {rule_label}: {} ({})", h.fix, truncate_chars(&h.next_step, 72))
     } else {
-        format!("- 정답: {}", h.fix)
+        format!("- {rule_label}: {}", h.fix)
     };
     let mut lines = vec![
-        format!("[{} {}{via_part}] {base_target}{sym_hint}{coupled_part}", h.id, h.current),
+        format!("[{} {}{kind_badge}{via_part}] {base_target}{sym_hint}{coupled_part}", h.id, h.current),
         fix_line,
     ];
+    if !h.forbid.is_empty() {
+        lines.push(format!("- 금지: {}", truncate_chars(&h.forbid, 120)));
+    }
     if !h.pitfalls.is_empty() {
         let cp = compact_pitfalls(h);
         if !cp.is_empty() {
-            lines.push(format!("- 피할 오답: {cp}"));
+            let pit_label = if h.kind == "canon" { "피할 구규약" } else { "피할 오답" };
+            lines.push(format!("- {pit_label}: {cp}"));
         }
     }
     lines.join("\n")

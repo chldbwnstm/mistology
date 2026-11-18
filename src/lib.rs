@@ -1,4 +1,5 @@
 pub mod diag;
+pub mod impact;
 pub mod index;
 pub mod note;
 
@@ -67,11 +68,43 @@ enum Cmd {
         #[command(flatten)]
         common: CommonWrite,
     },
-    /// 현재 정답이 틀렸을 때: 오답으로 바꾸고 새 버전을 붙인다
+    /// 표준 진입점(SSOT) · 모듈 간 불변 계약 등록 (중복 구현 및 첫 충돌 사전 차단)
+    Canon {
+        #[arg(long, allow_hyphen_values = true, help = "어떤 기능·역할을 수행할 때 적용되는가")]
+        intent: String,
+        #[arg(long, allow_hyphen_values = true, help = "반드시 재사용할 표준 구현 또는 지켜야 할 불변 계약")]
+        contract: String,
+        #[arg(long, allow_hyphen_values = true, help = "현재 코드·테스트 확인 근거")]
+        verified: String,
+        #[arg(long, default_value = "", allow_hyphen_values = true, help = "금지할 중복 구현이나 위반 패턴 (선택)")]
+        forbid: String,
+        #[arg(long = "signature", required = true, allow_hyphen_values = true, help = "핵심 심볼·도메인 식별 구문")]
+        signatures: Vec<String>,
+        #[arg(long = "file", required = true, allow_hyphen_values = true, help = "표준 구현이 위치한 저장소 파일 경로")]
+        files: Vec<String>,
+        #[arg(long = "symbol", required = true, allow_hyphen_values = true, help = "재사용할 대표 함수·타입·상수")]
+        symbols: Vec<String>,
+        #[arg(long = "coupled", allow_hyphen_values = true, help = "이 규약과 결합된 파일이나 심볼")]
+        coupled: Vec<String>,
+        #[arg(long = "tag", allow_hyphen_values = true)]
+        tags: Vec<String>,
+        #[arg(long, help = "예정된 파일이거나 같은 signature가 있어도 강제로 기록")]
+        force: bool,
+    },
+    /// 현재 정답이나 표준 규약이 바뀌었을 때: 구버전을 격리하고 새 버전을 붙인다
     Supersede {
         note_id: String,
+        #[arg(long, default_value = "", allow_hyphen_values = true, help = "새 버전에서 적용할 금지 패턴 (생략 시 이전 금지 미상속)")]
+        forbid: String,
         #[command(flatten)]
         common: CommonWrite,
+    },
+    /// 변경된 파일(기본 Git 작업트리 또는 지정 경로)과 1-hop 양방향 결합된 대상을 점검
+    Impact {
+        #[arg(long, conflicts_with = "paths", help = "비교 기준 Git ref (예: HEAD~1, main)")]
+        base: Option<String>,
+        #[arg(help = "점검할 파일 경로 (생략 시 Git 변경 파일 자동 수집)")]
+        paths: Vec<String>,
     },
     /// 내장된 mistology 에이전트 스킬(SKILL.md)을 코딩 에이전트 폴더에 자동 설치
     Setup {
@@ -212,6 +245,7 @@ where
                     Ok(format!("{rel}\n"))
                 }
                 Err(e) => {
+                    let err_code = classify_write_error(&e);
                     diag::record_event(
                         &root,
                         cwd,
@@ -219,20 +253,80 @@ where
                         "new",
                         elapsed_ms,
                         diag::EventDetail::Write { note_id: None },
-                        Some(&e),
+                        Some(err_code),
                     );
                     Err(e)
                 }
             }
         }
-        Cmd::Supersede { note_id, common } => {
+        Cmd::Canon {
+            intent,
+            contract,
+            verified,
+            forbid,
+            signatures,
+            files: raw_files,
+            symbols,
+            coupled: raw_coupled,
+            tags,
+            force,
+        } => {
+            let files = note::rebase_cwd_paths(&root, cwd, &raw_files);
+            let coupled = note::rebase_cwd_paths(&root, cwd, &raw_coupled);
+            let res = note::canon_note(
+                &root,
+                note::CanonFields {
+                    intent: &intent,
+                    contract: &contract,
+                    verified: &verified,
+                    forbid: &forbid,
+                    signatures: &signatures,
+                    files: &files,
+                    symbols: &symbols,
+                    coupled: &coupled,
+                    tags: &tags,
+                    force,
+                },
+            );
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            match res {
+                Ok(p) => {
+                    let nid = p.file_stem().and_then(|s| s.to_str());
+                    diag::record_event(
+                        &root,
+                        cwd,
+                        default_home.as_deref(),
+                        "canon",
+                        elapsed_ms,
+                        diag::EventDetail::Write { note_id: nid },
+                        None,
+                    );
+                    let rel = p.strip_prefix(&root).unwrap_or(&p).to_string_lossy().replace('\\', "/");
+                    Ok(format!("{rel}\n"))
+                }
+                Err(e) => {
+                    let err_code = classify_write_error(&e);
+                    diag::record_event(
+                        &root,
+                        cwd,
+                        default_home.as_deref(),
+                        "canon",
+                        elapsed_ms,
+                        diag::EventDetail::Write { note_id: None },
+                        Some(err_code),
+                    );
+                    Err(e)
+                }
+            }
+        }
+        Cmd::Supersede { note_id, forbid, common } => {
             let norm_id = note::rebase_cwd_paths(&root, cwd, std::slice::from_ref(&note_id))
                 .into_iter()
                 .next()
                 .unwrap_or(note_id);
             let files = note::rebase_cwd_paths(&root, cwd, &common.files);
             let coupled = note::rebase_cwd_paths(&root, cwd, &common.coupled);
-            let res = note::supersede(
+            let res = note::supersede_with_forbid(
                 &root,
                 &norm_id,
                 note::SupersedeFields {
@@ -247,6 +341,7 @@ where
                     coupled: &coupled,
                     tags: &common.tags,
                 },
+                &forbid,
             );
             let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
             match res {
@@ -265,16 +360,48 @@ where
                     Ok(format!("{rel}\n"))
                 }
                 Err(e) => {
+                    let err_code = classify_write_error(&e);
+                    let safe_nid = note::is_valid_id(&norm_id).then_some(norm_id.as_str());
                     diag::record_event(
                         &root,
                         cwd,
                         default_home.as_deref(),
                         "supersede",
                         elapsed_ms,
-                        diag::EventDetail::Write { note_id: Some(norm_id.as_str()) },
-                        Some(&e),
+                        diag::EventDetail::Write { note_id: safe_nid },
+                        Some(err_code),
                     );
                     Err(e)
+                }
+            }
+        }
+        Cmd::Impact { base, paths } => {
+            let res = impact::run_impact(&root, cwd, base.as_deref(), &paths);
+            let elapsed_ms = started.elapsed().as_secs_f64() * 1000.0;
+            match res {
+                Ok((changed, hit_notes, report)) => {
+                    diag::record_event(
+                        &root,
+                        cwd,
+                        default_home.as_deref(),
+                        "impact",
+                        elapsed_ms,
+                        diag::EventDetail::Impact { changed, hit_notes },
+                        None,
+                    );
+                    Ok(report)
+                }
+                Err(err) => {
+                    diag::record_event(
+                        &root,
+                        cwd,
+                        default_home.as_deref(),
+                        "impact",
+                        elapsed_ms,
+                        diag::EventDetail::Impact { changed: 0, hit_notes: 0 },
+                        Some(err.code),
+                    );
+                    Err(err.message)
                 }
             }
         }
@@ -293,6 +420,35 @@ where
                 bin_in_path,
             ))
         }
+    }
+}
+
+fn classify_write_error(err: &str) -> &'static str {
+    if err.starts_with("노트 id 형식이 아님") {
+        "노트 id 형식이 아님"
+    } else if err.starts_with("노트 없음:") {
+        "노트 없음"
+    } else if err.contains("retired 노트는 supersede할 수 없음") {
+        "retired 노트는 supersede할 수 없음"
+    } else if err.starts_with("저장소 내부 상대 경로만 허용됨:")
+        || err.starts_with("저장소 경계 밖이거나 읽을 수 없는 파일 경로:")
+    {
+        "invalid_or_outside_file_path"
+    } else if err.starts_with("존재하지 않는 파일 경로:") {
+        "missing_file_path"
+    } else if err.starts_with("일반 파일이 아닌 경로:") {
+        "not_regular_file"
+    } else if err.contains("coupled") {
+        "invalid_coupled_path"
+    } else if err.contains("이미 활성 노트에 동일한 signature") {
+        "duplicate_signature"
+    } else if err.starts_with("signature가 최소 하나 필요함")
+        || err.starts_with("비어 있는 필수 항목")
+        || err.starts_with("canon 노트는")
+    {
+        "missing_required_field"
+    } else {
+        "write_error"
     }
 }
 

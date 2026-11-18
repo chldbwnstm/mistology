@@ -13,6 +13,7 @@ pub const LIST_KEYS: [&str; 5] = ["tags", "files", "symbols", "coupled", "signat
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Meta {
     pub id: String,
+    pub kind: String,
     pub current: String,
     pub status: String,
     pub tags: Vec<String>,
@@ -28,6 +29,7 @@ pub struct Summary {
     pub fix: String,
     pub next_step: String,
     pub pitfalls: String,
+    pub forbid: String,
 }
 
 pub struct NewFields<'a> {
@@ -38,6 +40,19 @@ pub struct NewFields<'a> {
     pub fix: &'a str,
     pub verified: &'a str,
     pub next_step: &'a str,
+    pub signatures: &'a [String],
+    pub files: &'a [String],
+    pub symbols: &'a [String],
+    pub coupled: &'a [String],
+    pub tags: &'a [String],
+    pub force: bool,
+}
+
+pub struct CanonFields<'a> {
+    pub intent: &'a str,
+    pub contract: &'a str,
+    pub verified: &'a str,
+    pub forbid: &'a str,
     pub signatures: &'a [String],
     pub files: &'a [String],
     pub symbols: &'a [String],
@@ -178,6 +193,11 @@ pub fn rebase_cwd_paths(root: &Path, cwd: &Path, items: &[String]) -> Vec<String
     items
         .iter()
         .map(|item| {
+            let raw_trimmed = norm_text(item);
+            let explicit_rel_cwd = raw_trimmed.starts_with("./")
+                || raw_trimmed.starts_with(".\\")
+                || raw_trimmed.starts_with("../")
+                || raw_trimmed.starts_with("..\\");
             let clean = norm_rel_path(item);
             if clean.is_empty() {
                 return item.clone();
@@ -203,17 +223,42 @@ pub fn rebase_cwd_paths(root: &Path, cwd: &Path, items: &[String]) -> Vec<String
             }
             if let Some(ref rel_prefix) = rel_cwd {
                 let prefix_slash = format!("{rel_prefix}/");
-                if !clean.starts_with("@/")
-                    && !clean.starts_with("~/")
-                    && !clean.starts_with(&prefix_slash)
-                    && (clean.contains('/') || clean.contains('.'))
-                {
+                if explicit_rel_cwd {
                     if let Some(rel) = fs::canonicalize(cwd_canon.join(&clean)).ok().and_then(|p| {
                         p.strip_prefix(&root_canon)
                             .ok()
                             .map(|r| r.to_string_lossy().replace('\\', "/"))
                     }) {
+                        if !rel.is_empty() {
+                            return rel;
+                        }
+                    }
+                    if let Some(lex_rel) =
+                        normalize_lexical_segments(&format!("{rel_prefix}/{clean}"))
+                    {
+                        return lex_rel;
+                    }
+                    return item.clone();
+                }
+                if !clean.starts_with("@/")
+                    && !clean.starts_with("~/")
+                    && !clean.starts_with(&prefix_slash)
+                    && !clean.contains("::")
+                {
+                    let cwd_cand = cwd_canon.join(&clean);
+                    if let Some(rel) = fs::canonicalize(&cwd_cand).ok().and_then(|p| {
+                        p.strip_prefix(&root_canon)
+                            .ok()
+                            .map(|r| r.to_string_lossy().replace('\\', "/"))
+                    }) {
                         return rel;
+                    }
+                    if fs::symlink_metadata(&cwd_cand).is_ok() {
+                        if let Some(lex_rel) =
+                            normalize_lexical_segments(&format!("{rel_prefix}/{clean}"))
+                        {
+                            return lex_rel;
+                        }
                     }
                 }
             }
@@ -242,6 +287,192 @@ pub fn notes_dir(root: &Path) -> Result<PathBuf, String> {
     Ok(d)
 }
 
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum RepoFileCheck {
+    Present,
+    Missing,
+    NotRegularFile,
+    SkippedBoundary,
+    AccessError(String),
+}
+
+pub fn is_safe_repo_rel_path(p: &str) -> bool {
+    let has_drive = p.len() >= 2 && p.as_bytes()[1] == b':';
+    !p.is_empty()
+        && !p.starts_with('/')
+        && !p.starts_with('\\')
+        && !has_drive
+        && !p.starts_with("@/")
+        && !p.starts_with("~/")
+        && !p.contains('\\')
+        && !p.split('/').any(|seg| seg.is_empty() || seg == "." || seg == "..")
+}
+
+pub fn inspect_repo_file(root: &Path, rel_slash: &str) -> RepoFileCheck {
+    if !is_safe_repo_rel_path(rel_slash) {
+        return RepoFileCheck::SkippedBoundary;
+    }
+    let root_canon = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let mut cur = root.to_path_buf();
+    let segs: Vec<&str> = rel_slash.split('/').collect();
+    for (idx, seg) in segs.iter().enumerate() {
+        cur.push(seg);
+        match fs::symlink_metadata(&cur) {
+            Ok(meta) => {
+                if meta.file_type().is_symlink() {
+                    let Ok(target) = fs::canonicalize(&cur) else {
+                        return RepoFileCheck::SkippedBoundary;
+                    };
+                    if !target.starts_with(&root_canon) {
+                        return RepoFileCheck::SkippedBoundary;
+                    }
+                    if idx + 1 == segs.len() {
+                        return if target.is_file() {
+                            RepoFileCheck::Present
+                        } else {
+                            RepoFileCheck::NotRegularFile
+                        };
+                    }
+                } else if idx + 1 == segs.len() {
+                    return if meta.is_file() {
+                        RepoFileCheck::Present
+                    } else {
+                        RepoFileCheck::NotRegularFile
+                    };
+                } else if !meta.is_dir() {
+                    return RepoFileCheck::NotRegularFile;
+                }
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return RepoFileCheck::Missing;
+            }
+            Err(e) => {
+                return RepoFileCheck::AccessError(e.kind().to_string());
+            }
+        }
+    }
+    RepoFileCheck::SkippedBoundary
+}
+
+fn validate_canon_file_path(root: &Path, rel: &str, allow_missing: bool) -> Result<(), String> {
+    if !is_safe_repo_rel_path(rel) {
+        return Err(format!("저장소 내부 상대 경로만 허용됨: {rel}"));
+    }
+    match inspect_repo_file(root, rel) {
+        RepoFileCheck::Present => Ok(()),
+        RepoFileCheck::Missing if allow_missing => Ok(()),
+        RepoFileCheck::Missing => {
+            Err(format!("존재하지 않는 파일 경로: {rel} (예정된 경로면 --force)"))
+        }
+        RepoFileCheck::NotRegularFile => Err(format!("일반 파일이 아닌 경로: {rel}")),
+        RepoFileCheck::SkippedBoundary | RepoFileCheck::AccessError(_) => {
+            Err(format!("저장소 경계 밖이거나 읽을 수 없는 파일 경로: {rel}"))
+        }
+    }
+}
+
+fn validate_canon_coupled_entry(root: &Path, item: &str) -> Result<(), String> {
+    let has_drive = item.len() >= 2 && item.as_bytes()[1] == b':';
+    if item.starts_with('/') || item.starts_with('\\') || has_drive {
+        return Err(format!("coupled에 저장소 외부 절대 경로는 허용되지 않음: {item}"));
+    }
+    let slash = item.replace('\\', "/");
+    if slash == "." || slash == ".." || slash.split('/').any(|seg| seg == "..") {
+        return Err(format!("coupled에 상위/현재 디렉터리(., ..) 경로는 허용되지 않음: {item}"));
+    }
+    if let Some(rest) = slash.strip_prefix("@/").or_else(|| slash.strip_prefix("~/")) {
+        if !is_safe_repo_rel_path(rest) {
+            return Err(format!("비정규 별칭 coupled 경로: {item}"));
+        }
+        return Ok(());
+    }
+    if !is_safe_repo_rel_path(&slash) {
+        return Err(format!("비정규 coupled 경로: {item}"));
+    }
+    if let RepoFileCheck::SkippedBoundary | RepoFileCheck::AccessError(_) =
+        inspect_repo_file(root, &slash)
+    {
+        return Err(format!("저장소 경계를 벗어나는 coupled 경로: {item}"));
+    }
+    Ok(())
+}
+
+fn normalize_lexical_segments(rel_slash: &str) -> Option<String> {
+    let mut stack: Vec<&str> = Vec::new();
+    for seg in rel_slash.split('/') {
+        if seg.is_empty() || seg == "." {
+            continue;
+        }
+        if seg == ".." {
+            stack.pop()?;
+        } else {
+            stack.push(seg);
+        }
+    }
+    if stack.is_empty() {
+        None
+    } else {
+        Some(stack.join("/"))
+    }
+}
+
+pub fn lexical_rebase_path(root: &Path, cwd: &Path, raw: &str) -> Option<String> {
+    let raw_trimmed = norm_text(raw);
+    let explicit_rel_cwd = raw_trimmed.starts_with("./")
+        || raw_trimmed.starts_with(".\\")
+        || raw_trimmed.starts_with("../")
+        || raw_trimmed.starts_with("..\\");
+    let clean = norm_rel_path(raw);
+    if clean.is_empty() || clean.starts_with("@/") || clean.starts_with("~/") {
+        return None;
+    }
+    let prefixes = repo_root_prefixes(root, cwd);
+    if let Some(stripped) = strip_repo_root_prefix(&clean, &prefixes) {
+        return normalize_lexical_segments(stripped);
+    }
+    let root_canon = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let has_drive = clean.len() >= 2 && clean.as_bytes()[1] == b':';
+    if clean.starts_with('/') || has_drive {
+        let p = Path::new(&clean);
+        let mut cur = p.to_path_buf();
+        let mut tail: Vec<String> = Vec::new();
+        while !cur.exists() {
+            let name = cur.file_name()?.to_string_lossy().to_string();
+            tail.push(name);
+            cur = cur.parent()?.to_path_buf();
+        }
+        let mut resolved = fs::canonicalize(&cur).ok()?;
+        for comp in tail.iter().rev() {
+            resolved.push(comp);
+        }
+        let rel = resolved.strip_prefix(&root_canon).ok()?;
+        return normalize_lexical_segments(&rel.to_string_lossy().replace('\\', "/"));
+    }
+
+    let cwd_canon = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    let rel_cwd = cwd_canon
+        .strip_prefix(&root_canon)
+        .ok()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_string_lossy().replace('\\', "/"));
+
+    if let Some(prefix) = rel_cwd {
+        if explicit_rel_cwd {
+            return normalize_lexical_segments(&format!("{prefix}/{clean}"));
+        }
+        let prefix_slash = format!("{prefix}/");
+        if clean.starts_with(&prefix_slash)
+            || (root.join(&clean).exists() && !cwd_canon.join(&clean).exists())
+        {
+            normalize_lexical_segments(&clean)
+        } else {
+            normalize_lexical_segments(&format!("{prefix}/{clean}"))
+        }
+    } else {
+        normalize_lexical_segments(&clean)
+    }
+}
+
 pub fn is_valid_id(s: &str) -> bool {
     let b = s.as_bytes();
     b.len() >= 14
@@ -263,12 +494,12 @@ pub fn parse_version_num(current: &str) -> Option<u32> {
 }
 
 pub fn render(meta: &Meta, body: &str) -> String {
-    let mut lines = vec![
-        "---".to_string(),
-        format!("id: {}", meta.id),
-        format!("current: {}", meta.current),
-        format!("status: {}", meta.status),
-    ];
+    let mut lines = vec!["---".to_string(), format!("id: {}", meta.id)];
+    if meta.kind == "canon" {
+        lines.push("kind: canon".to_string());
+    }
+    lines.push(format!("current: {}", meta.current));
+    lines.push(format!("status: {}", meta.status));
     for (key, vals) in [
         ("tags", &meta.tags),
         ("files", &meta.files),
@@ -301,6 +532,7 @@ pub fn parse(raw: &str) -> Result<(Meta, String), String> {
     let (head, body) = rest.split_once("\n---\n").ok_or("frontmatter 끝(---) 없음")?;
 
     let mut id = String::new();
+    let mut kind = "mistake".to_string();
     let mut current = String::new();
     let mut status = String::new();
     let mut lists: [Vec<String>; 5] = Default::default();
@@ -331,6 +563,7 @@ pub fn parse(raw: &str) -> Result<(Meta, String), String> {
                 let v = value.trim().to_string();
                 match key {
                     "id" => id = v,
+                    "kind" => kind = v,
                     "current" => current = v,
                     "status" => status = v,
                     _ => return Err(format!("알 수 없는 frontmatter 키: {key}")),
@@ -342,6 +575,9 @@ pub fn parse(raw: &str) -> Result<(Meta, String), String> {
     if id.is_empty() || current.is_empty() || status.is_empty() {
         return Err("필수 필드(id, current, status) 누락".to_string());
     }
+    if kind != "mistake" && kind != "canon" {
+        return Err(format!("kind가 mistake|canon이 아님: {kind}"));
+    }
     if status != "active" && status != "retired" {
         return Err(format!("status가 active|retired가 아님: {status}"));
     }
@@ -350,7 +586,7 @@ pub fn parse(raw: &str) -> Result<(Meta, String), String> {
     }
     let [tags, files, symbols, coupled, signatures] = lists;
     Ok((
-        Meta { id, current, status, tags, files, symbols, coupled, signatures },
+        Meta { id, kind, current, status, tags, files, symbols, coupled, signatures },
         body.to_string(),
     ))
 }
@@ -381,16 +617,18 @@ pub fn extract_summary(body: &str) -> Summary {
     let mut fix = String::new();
     let mut next_step = String::new();
     let mut pitfalls = Vec::new();
+    let mut forbid = String::new();
 
     for block in body.split("\n## ") {
         let block = block.strip_prefix("## ").unwrap_or(block);
         let mut lines = block.lines();
         let Some(header) = lines.next() else { continue };
-        if header == "문제 상황" {
+        if header == "문제 상황" || header == "의도" {
             problem = one_line(&lines.collect::<Vec<_>>().join(" "));
         } else if let Some(ver) = header.split_whitespace().next().filter(|w| parse_version_num(w).is_some()) {
             let mut did = String::new();
             let mut next = String::new();
+            let mut forb = String::new();
             let mut active = 0u8;
             for l in lines {
                 if let Some(v) = l.strip_prefix("- 한 것: ") {
@@ -399,6 +637,9 @@ pub fn extract_summary(body: &str) -> Summary {
                 } else if let Some(v) = l.strip_prefix("- 다음에는: ") {
                     next = one_line(v);
                     active = 2;
+                } else if let Some(v) = l.strip_prefix("- 금지: ") {
+                    forb = one_line(v);
+                    active = 3;
                 } else if let Some(cont) = l.strip_prefix("  ") {
                     let piece = one_line(cont);
                     if !piece.is_empty() {
@@ -408,6 +649,9 @@ pub fn extract_summary(body: &str) -> Summary {
                         } else if active == 2 {
                             next.push(' ');
                             next.push_str(&piece);
+                        } else if active == 3 {
+                            forb.push(' ');
+                            forb.push_str(&piece);
                         }
                     }
                 } else if l.starts_with("- ") {
@@ -417,12 +661,19 @@ pub fn extract_summary(body: &str) -> Summary {
             if header.contains(&format!("({CURRENT})")) {
                 fix = did;
                 next_step = next;
+                forbid = forb;
             } else if !did.is_empty() {
                 pitfalls.push(format!("{ver}: {did}"));
             }
         }
     }
-    Summary { problem, fix, next_step, pitfalls: pitfalls.join(" / ") }
+    Summary {
+        problem,
+        fix,
+        next_step,
+        pitfalls: pitfalls.join(" / "),
+        forbid,
+    }
 }
 
 pub fn bullets(fields: &[(&str, &str)]) -> String {
@@ -441,6 +692,60 @@ pub fn section(n: u32, label: &str, fields: &[(&str, &str)]) -> String {
     section_on(n, label, &today_iso(), fields)
 }
 
+fn check_active_signature_conflict(d: &Path, signatures: &[String]) -> Result<(), String> {
+    let sig_set: HashSet<&str> = signatures.iter().map(String::as_str).collect();
+    let mut entries: Vec<PathBuf> = fs::read_dir(d)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok().map(|e| e.path()))
+        .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("md"))
+        .collect();
+    entries.sort();
+    for path in entries {
+        if let Some((meta, _)) = read_note(&path) {
+            if meta.status == "active" && meta.signatures.iter().any(|s| sig_set.contains(s.as_str())) {
+                let existing_id = path.file_stem().and_then(|s| s.to_str()).unwrap_or(&meta.id);
+                return Err(format!(
+                    "같은 signature의 노트가 이미 있음: {existing_id}\n같은 문제이고 현재 정답이 틀렸으면 supersede {existing_id}, 현재 정답대로 풀렸으면 기록할 것 없음.\n다른 문제면 --force"
+                ));
+            }
+        }
+    }
+    Ok(())
+}
+
+fn alloc_and_write_note(d: &Path, today: &str, mut meta: Meta, body: &str) -> Result<PathBuf, String> {
+    let prefix = format!("{today}-");
+    let max_seq = fs::read_dir(d)
+        .map_err(|e| e.to_string())?
+        .filter_map(|e| e.ok())
+        .filter_map(|e| {
+            let name = e.file_name().into_string().ok()?;
+            let stem = name.strip_suffix(".md")?;
+            let num = stem.strip_prefix(&prefix)?;
+            num.bytes().all(|b| b.is_ascii_digit()).then(|| num.parse::<u32>().ok())?
+        })
+        .max()
+        .unwrap_or(0);
+
+    for seq in (max_seq + 1).. {
+        meta.id = format!("{today}-{seq:03}");
+        let path = d.join(format!("{}.md", meta.id));
+        match OpenOptions::new().write(true).create_new(true).open(&path) {
+            Ok(mut file) => {
+                if let Err(e) = file.write_all(render(&meta, body).as_bytes()) {
+                    drop(file);
+                    let _ = fs::remove_file(&path);
+                    return Err(e.to_string());
+                }
+                return Ok(path);
+            }
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e.to_string()),
+        }
+    }
+    unreachable!()
+}
+
 pub fn new_note(root: &Path, f: NewFields) -> Result<PathBuf, String> {
     let signatures = clean_list(f.signatures);
     if signatures.is_empty() {
@@ -454,23 +759,7 @@ pub fn new_note(root: &Path, f: NewFields) -> Result<PathBuf, String> {
     }
     let d = notes_dir(root)?;
     if !f.force {
-        let sig_set: HashSet<&str> = signatures.iter().map(String::as_str).collect();
-        let mut entries: Vec<PathBuf> = fs::read_dir(&d)
-            .map_err(|e| e.to_string())?
-            .filter_map(|e| e.ok().map(|e| e.path()))
-            .filter(|p| p.extension().and_then(|s| s.to_str()) == Some("md"))
-            .collect();
-        entries.sort();
-        for path in entries {
-            if let Some((meta, _)) = read_note(&path) {
-                if meta.status == "active" && meta.signatures.iter().any(|s| sig_set.contains(s.as_str())) {
-                    let existing_id = path.file_stem().and_then(|s| s.to_str()).unwrap_or(&meta.id);
-                    return Err(format!(
-                        "같은 signature의 노트가 이미 있음: {existing_id}\n같은 문제이고 현재 정답이 틀렸으면 supersede {existing_id}, 현재 정답대로 풀렸으면 기록할 것 없음.\n다른 문제면 --force"
-                    ));
-                }
-            }
-        }
+        check_active_signature_conflict(&d, &signatures)?;
     }
     let today = today_iso();
     let body = format!(
@@ -479,21 +768,9 @@ pub fn new_note(root: &Path, f: NewFields) -> Result<PathBuf, String> {
         section_on(1, "오답", &today, &[("한 것", f.tried), ("틀린 증거", f.evidence), ("왜 틀렸나", f.why)]),
         section_on(2, CURRENT, &today, &[("한 것", f.fix), ("확인 근거", f.verified), ("다음에는", f.next_step)]),
     );
-    let prefix = format!("{today}-");
-    let max_seq = fs::read_dir(&d)
-        .map_err(|e| e.to_string())?
-        .filter_map(|e| e.ok())
-        .filter_map(|e| {
-            let name = e.file_name().into_string().ok()?;
-            let stem = name.strip_suffix(".md")?;
-            let num = stem.strip_prefix(&prefix)?;
-            num.bytes().all(|b| b.is_ascii_digit()).then(|| num.parse::<u32>().ok())?
-        })
-        .max()
-        .unwrap_or(0);
-
-    let mut meta = Meta {
+    let meta = Meta {
         id: String::new(),
+        kind: "mistake".to_string(),
         current: "v2".to_string(),
         status: "active".to_string(),
         tags: clean_list(f.tags),
@@ -502,23 +779,59 @@ pub fn new_note(root: &Path, f: NewFields) -> Result<PathBuf, String> {
         coupled: clean_coupled(f.coupled),
         signatures,
     };
-    for seq in (max_seq + 1).. {
-        meta.id = format!("{today}-{seq:03}");
-        let path = d.join(format!("{}.md", meta.id));
-        match OpenOptions::new().write(true).create_new(true).open(&path) {
-            Ok(mut file) => {
-                if let Err(e) = file.write_all(render(&meta, &body).as_bytes()) {
-                    drop(file);
-                    let _ = fs::remove_file(&path);
-                    return Err(e.to_string());
-                }
-                return Ok(path);
-            }
-            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
-            Err(e) => return Err(e.to_string()),
-        }
+    alloc_and_write_note(&d, &today, meta, &body)
+}
+
+pub fn canon_note(root: &Path, f: CanonFields) -> Result<PathBuf, String> {
+    let signatures = clean_list(f.signatures);
+    if signatures.is_empty() {
+        return Err("signature가 최소 하나 필요함 (핵심 심볼·도메인 식별 구문)".to_string());
     }
-    unreachable!()
+    let files = clean_files(f.files);
+    if files.is_empty() {
+        return Err("canon 노트는 표준 구현이 위치한 --file이 최소 하나 필요함".to_string());
+    }
+    for rel in &files {
+        validate_canon_file_path(root, rel, f.force)?;
+    }
+    let coupled = clean_coupled(f.coupled);
+    for c in &coupled {
+        validate_canon_coupled_entry(root, c)?;
+    }
+    let symbols = clean_list(f.symbols);
+    if symbols.is_empty() {
+        return Err("canon 노트는 재사용할 대표 --symbol이 최소 하나 필요함".to_string());
+    }
+    if [f.intent, f.contract, f.verified].iter().any(|v| norm_text(v).is_empty()) {
+        return Err("비어 있는 필수 항목(--intent, --contract, --verified)이 있음".to_string());
+    }
+    let d = notes_dir(root)?;
+    if !f.force {
+        check_active_signature_conflict(&d, &signatures)?;
+    }
+    let today = today_iso();
+    let mut v1_fields = vec![("한 것", f.contract), ("확인 근거", f.verified)];
+    let forbid_clean = norm_text(f.forbid);
+    if !forbid_clean.is_empty() {
+        v1_fields.push(("금지", f.forbid));
+    }
+    let body = format!(
+        "## 의도\n{}\n{}",
+        norm_text(f.intent).replace('\n', "\n  "),
+        section_on(1, CURRENT, &today, &v1_fields),
+    );
+    let meta = Meta {
+        id: String::new(),
+        kind: "canon".to_string(),
+        current: "v1".to_string(),
+        status: "active".to_string(),
+        tags: clean_list(f.tags),
+        files,
+        symbols,
+        coupled,
+        signatures,
+    };
+    alloc_and_write_note(&d, &today, meta, &body)
 }
 
 pub const SUPERSEDED: &str = "오답, 한때 정답";
@@ -554,6 +867,15 @@ fn normalize_note_id(root: &Path, raw_id: &str) -> String {
 }
 
 pub fn supersede(root: &Path, note_id: &str, f: SupersedeFields) -> Result<PathBuf, String> {
+    supersede_with_forbid(root, note_id, f, "")
+}
+
+pub fn supersede_with_forbid(
+    root: &Path,
+    note_id: &str,
+    f: SupersedeFields,
+    forbid: &str,
+) -> Result<PathBuf, String> {
     let clean_id = normalize_note_id(root, note_id);
     if !is_valid_id(&clean_id) {
         return Err(format!("노트 id 형식이 아님 (예: 2026-11-11-001): {note_id}"));
@@ -571,6 +893,16 @@ pub fn supersede(root: &Path, note_id: &str, f: SupersedeFields) -> Result<PathB
     if meta.status != "active" {
         return Err(format!("{note_id}.md: retired 노트는 supersede할 수 없음"));
     }
+    let added_files = clean_files(f.files);
+    let added_coupled = clean_coupled(f.coupled);
+    if meta.kind == "canon" {
+        for rel in &added_files {
+            validate_canon_file_path(root, rel, false)?;
+        }
+        for c in &added_coupled {
+            validate_canon_coupled_entry(root, c)?;
+        }
+    }
     let n = parse_version_num(&meta.current).unwrap();
     let last = body.rfind("\n## v").map(|i| i + 1).unwrap_or(0);
     let expected = format!("## v{n} ({CURRENT}) ");
@@ -578,18 +910,26 @@ pub fn supersede(root: &Path, note_id: &str, f: SupersedeFields) -> Result<PathB
         return Err(format!("{note_id}.md: 마지막 버전이 v{n} ({CURRENT})가 아님. 손으로 고친 곳을 먼저 확인할 것"));
     }
     let updated_tail = body[last..].replacen(&format!("({CURRENT})"), &format!("({SUPERSEDED})"), 1);
+    let mut next_fields = vec![
+        ("한 것", f.fix),
+        ("확인 근거", f.verified),
+        ("다음에는", f.next_step),
+    ];
+    if !norm_text(forbid).is_empty() {
+        next_fields.push(("금지", forbid));
+    }
     let new_body = format!(
         "{}{}\n{}{}",
         &body[..last],
         updated_tail.trim_end_matches('\n'),
         bullets(&[("틀린 증거", f.evidence), ("왜 틀렸나", f.why)]),
-        section(n + 1, CURRENT, &[("한 것", f.fix), ("확인 근거", f.verified), ("다음에는", f.next_step)]),
+        section(n + 1, CURRENT, &next_fields),
     );
     meta.current = format!("v{}", n + 1);
     meta.signatures = clean_list(&[meta.signatures, f.signatures.to_vec()].concat());
-    meta.files = clean_files(&[meta.files, f.files.to_vec()].concat());
+    meta.files = clean_files(&[meta.files, added_files].concat());
     meta.symbols = clean_list(&[meta.symbols, f.symbols.to_vec()].concat());
-    meta.coupled = clean_coupled(&[meta.coupled, f.coupled.to_vec()].concat());
+    meta.coupled = clean_coupled(&[meta.coupled, added_coupled].concat());
     meta.tags = clean_list(&[meta.tags, f.tags.to_vec()].concat());
 
     // shortcut: 같은 노트를 두 에이전트가 동시에 supersede하면 한쪽이 덮인다, 실제로 겹치면 파일 락 추가

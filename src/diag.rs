@@ -20,6 +20,10 @@ pub enum EventDetail<'a> {
     Write {
         note_id: Option<&'a str>,
     },
+    Impact {
+        changed: usize,
+        hit_notes: usize,
+    },
 }
 
 fn rel_cwd_display(root: &Path, cwd: &Path) -> String {
@@ -97,6 +101,31 @@ fn replace_path_token_ci(haystack: &str, needle: &str, replacement: &str) -> Str
     out
 }
 
+fn has_external_abs_prefix(s: &str) -> bool {
+    let has_drive = s.len() >= 3
+        && s.as_bytes()[0].is_ascii_alphabetic()
+        && s.as_bytes()[1] == b':'
+        && matches!(s.as_bytes()[2], b'/' | b'\\');
+    s.starts_with('/') || s.starts_with('\\') || has_drive
+}
+
+fn scrub_external_abs_paths(s: &str) -> String {
+    let trimmed = s.trim();
+    if has_external_abs_prefix(trimmed) {
+        return "<external-path>".to_string();
+    }
+    let mut search_from = 0usize;
+    while let Some(rel_idx) = trimmed[search_from..].find(": ") {
+        let sep_idx = search_from + rel_idx;
+        let tail = trimmed[sep_idx + 2..].trim_start();
+        if has_external_abs_prefix(tail) {
+            return format!("{}: <external-path>", &trimmed[..sep_idx]);
+        }
+        search_from = sep_idx + 2;
+    }
+    s.to_string()
+}
+
 fn redact_paths(s: &str, root: &Path, cwd: &Path, home: Option<&Path>) -> String {
     let mut patterns: Vec<(String, &'static str)> = Vec::new();
     push_path_variants(&mut patterns, root, "<repo>");
@@ -159,7 +188,7 @@ pub fn record_event(
         .unwrap_or(0);
     let ms = (elapsed_ms * 100.0).round() / 100.0;
     let cwd_rel = rel_cwd_display(root, cwd);
-    let err_clean = err.map(|e| redact_paths(e.trim(), root, cwd, home));
+    let err_clean = err.map(|e| scrub_external_abs_paths(&redact_paths(e.trim(), root, cwd, home)));
 
     let entry = match detail {
         EventDetail::Search { mode, k, query, hits } => {
@@ -189,7 +218,8 @@ pub fn record_event(
             })
         }
         EventDetail::Write { note_id } => {
-            let note_clean = note_id.map(|n| redact_paths(n, root, cwd, home));
+            let note_clean =
+                note_id.map(|n| scrub_external_abs_paths(&redact_paths(n, root, cwd, home)));
             json!({
                 "ts": ts,
                 "v": env!("CARGO_PKG_VERSION"),
@@ -200,6 +230,16 @@ pub fn record_event(
                 "err": err_clean,
             })
         }
+        EventDetail::Impact { changed, hit_notes } => json!({
+            "ts": ts,
+            "v": env!("CARGO_PKG_VERSION"),
+            "cmd": cmd,
+            "ms": ms,
+            "cwd": cwd_rel,
+            "changed": changed,
+            "hit_notes": hit_notes,
+            "err": err_clean,
+        }),
     };
 
     if let Ok(mut f) = OpenOptions::new().create(true).append(true).open(&events_path) {
@@ -307,9 +347,25 @@ pub fn run_doctor(
         md_paths.sort();
 
         let mut active = 0usize;
+        let mut canon_cnt = 0usize;
         let mut retired = 0usize;
         let mut skipped: Vec<(String, String)> = Vec::new();
         let mut id_map: BTreeMap<String, Vec<String>> = BTreeMap::new();
+        let mut path_cache: BTreeMap<String, note::RepoFileCheck> = BTreeMap::new();
+        let mut drift_missing: Vec<(String, Vec<String>)> = Vec::new();
+        let mut drift_access: Vec<(String, Vec<String>)> = Vec::new();
+
+        let is_checkable_canon_file = |raw: &str| -> bool {
+            note::is_safe_repo_rel_path(raw) && !raw.contains("::")
+        };
+        let is_checkable_general_file = |raw: &str| -> bool {
+            note::is_safe_repo_rel_path(raw)
+                && !raw.contains("::")
+                && raw.rsplit_once('/').is_some_and(|(_, base)| {
+                    base.rsplit_once('.')
+                        .is_some_and(|(st, ext)| !st.is_empty() && ext.bytes().any(|b| b.is_ascii_alphabetic()))
+                })
+        };
 
         for p in md_paths {
             let fname = p
@@ -317,11 +373,51 @@ pub fn run_doctor(
                 .unwrap_or_default()
                 .to_string_lossy()
                 .to_string();
+            let note_label = fname.strip_suffix(".md").unwrap_or(&fname).to_string();
             match fs::read_to_string(&p) {
                 Ok(raw) => match note::parse(&raw) {
                     Ok((meta, _)) => {
                         if meta.status == "active" {
                             active += 1;
+                            let is_canon = meta.kind == "canon";
+                            if is_canon {
+                                canon_cnt += 1;
+                            }
+                            let mut miss_for_note = Vec::new();
+                            let mut acc_for_note = Vec::new();
+                            let mut seen_in_note = std::collections::HashSet::new();
+                            for (cand, canon_primary) in meta
+                                .files
+                                .iter()
+                                .map(|c| (c, is_canon))
+                                .chain(meta.coupled.iter().map(|c| (c, false)))
+                            {
+                                let eligible = (canon_primary && is_checkable_canon_file(cand))
+                                    || is_checkable_general_file(cand);
+                                if !eligible || !seen_in_note.insert(cand.clone()) {
+                                    continue;
+                                }
+                                let check = path_cache
+                                    .entry(cand.clone())
+                                    .or_insert_with(|| note::inspect_repo_file(root, cand))
+                                    .clone();
+                                match check {
+                                    note::RepoFileCheck::Present | note::RepoFileCheck::SkippedBoundary => {}
+                                    note::RepoFileCheck::Missing => miss_for_note.push(cand.clone()),
+                                    note::RepoFileCheck::NotRegularFile => {
+                                        miss_for_note.push(format!("{cand} (일반 파일 아님)"))
+                                    }
+                                    note::RepoFileCheck::AccessError(kind) => {
+                                        acc_for_note.push(format!("{cand} ({kind})"))
+                                    }
+                                }
+                            }
+                            if !miss_for_note.is_empty() {
+                                drift_missing.push((note_label.clone(), miss_for_note));
+                            }
+                            if !acc_for_note.is_empty() {
+                                drift_access.push((note_label, acc_for_note));
+                            }
                         } else {
                             retired += 1;
                         }
@@ -333,7 +429,7 @@ pub fn run_doctor(
             }
         }
         lines.push(format!(
-            "- notes: active={active}, retired={retired}, skipped={}",
+            "- notes: active={active} (canon={canon_cnt}), retired={retired}, skipped={}",
             skipped.len()
         ));
         for (fname, reason) in &skipped {
@@ -345,6 +441,22 @@ pub fn run_doctor(
                     "  - 중복 id 감지 `{id}`: [{}]",
                     files.join(", ")
                 ));
+            }
+        }
+        if drift_missing.is_empty() && drift_access.is_empty() {
+            lines.push("- drift: ok (현 체크아웃 내 누락 참조 파일 없음)".to_string());
+        } else {
+            let issue_total: usize = drift_missing.iter().map(|(_, v)| v.len()).sum::<usize>()
+                + drift_access.iter().map(|(_, v)| v.len()).sum::<usize>();
+            lines.push(format!("- drift: 미발견·이상 참조 {issue_total}건"));
+            for (nid, paths) in &drift_missing {
+                lines.push(format!(
+                    "  - `{nid}` 현 체크아웃 부재/비정상: [{}] (경로 이동 시 frontmatter 수정, 폐기 시 retired 권장)",
+                    paths.join(", ")
+                ));
+            }
+            for (nid, errs) in &drift_access {
+                lines.push(format!("  - `{nid}` 접근 불가: [{}]", errs.join(", ")));
             }
         }
     }
