@@ -1666,6 +1666,76 @@ pub fn search_scored_in(root: &Path, cwd: &Path, query: &str, k: usize) -> Vec<S
     run_search_internal(root, cwd, query, k, None).0
 }
 
+/// Strictly read-only in-memory search for hook handlers (never creates, locks, or deletes `index.db`).
+pub fn search_scored_readonly(root: &Path, cwd: &Path, query: &str, k: usize) -> Vec<ScoredHit> {
+    let d = root.join(".mistology").join("notes");
+    if !d.is_dir() || k == 0 {
+        return Vec::new();
+    }
+    let root_canon = fs::canonicalize(root).unwrap_or_else(|_| root.to_path_buf());
+    let cwd_canon = fs::canonicalize(cwd).unwrap_or_else(|_| cwd.to_path_buf());
+    let rel_cwd = cwd_canon
+        .strip_prefix(&root_canon)
+        .ok()
+        .filter(|p| !p.as_os_str().is_empty())
+        .map(|p| p.to_string_lossy().replace('\\', "/").to_lowercase());
+
+    let norm_q: String = query.nfc().collect();
+    let (quoted_spans, cleaned_q, saw_quoted_path) = scan_quoted_spans(&norm_q);
+    let mut had_path = saw_quoted_path;
+    let mut non_path_chunks = Vec::new();
+    for chunk in cleaned_q.split_whitespace() {
+        if is_path_chunk(chunk) {
+            had_path = true;
+        } else {
+            non_path_chunks.push(chunk);
+        }
+    }
+    let words_source = non_path_chunks.join(" ");
+    let mut seen = HashSet::new();
+    let mut words = Vec::new();
+    for raw in words_source.split(|c: char| !c.is_alphanumeric()) {
+        if raw.chars().count() >= 2 {
+            let stemmed_raw = korean_stem(raw);
+            let stemmed = stemmed_raw.to_lowercase();
+            if seen.insert(stemmed.clone()) {
+                words.push(stemmed);
+            }
+            for sub in camel_subwords(stemmed_raw) {
+                if seen.insert(sub.clone()) {
+                    words.push(sub);
+                }
+            }
+        }
+    }
+    words.retain(|w| !NOISE_WORDS.contains(&w.as_str()));
+
+    let query_entities = extract_query_entities(&norm_q, &quoted_spans, root, cwd, rel_cwd.as_deref());
+    let require_multi_body = words.len() >= 4 || (had_path && words.len() >= 3);
+    if words.is_empty() && query_entities.is_empty() {
+        return Vec::new();
+    }
+    let fts_query = words
+        .iter()
+        .map(|w| {
+            if w.chars().any(is_hangul) || w.len() >= 5 {
+                format!("\"{w}\" OR \"{w}\"*")
+            } else {
+                format!("\"{w}\"")
+            }
+        })
+        .collect::<Vec<_>>()
+        .join(" OR ");
+    let plan = QueryPlan {
+        words: &words,
+        require_multi_body,
+        fts_query: &fts_query,
+        entities: &query_entities,
+        k,
+    };
+    query_in_memory(&d, &plan, None).unwrap_or_default()
+}
+
 pub fn explain_in(root: &Path, cwd: &Path, query: &str, k: usize) -> (Vec<ScoredHit>, String) {
     let mut trace = ExplainTrace::default();
     let (hits, words, raw_entities, rel_cwd, require_multi_body) =

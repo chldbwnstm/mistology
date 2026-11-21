@@ -10,6 +10,14 @@ pub struct ImpactError {
     pub message: String,
 }
 
+pub struct ImpactSummary {
+    pub changed: usize,
+    pub changed_paths: Vec<String>,
+    pub hit_notes: usize,
+    pub unchecked_count: usize,
+    pub report: String,
+}
+
 impl ImpactError {
     fn new(code: &'static str, message: impl Into<String>) -> Self {
         Self { code, message: message.into() }
@@ -330,15 +338,16 @@ struct ImpactRow {
 fn evaluate_impact_on_notes(
     root: &Path,
     changed_rel_paths: &[String],
-) -> Result<(usize, String), ImpactError> {
+) -> Result<(usize, usize, String), ImpactError> {
     if changed_rel_paths.is_empty() {
-        return Ok((0, "변경된 파일 없음\n".to_string()));
+        return Ok((0, 0, "변경된 파일 없음\n".to_string()));
     }
     let d = root.join(".mistology").join("notes");
     let entries = match fs::read_dir(&d) {
         Ok(it) => it,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
             return Ok((
+                0,
                 0,
                 format!("결합 점검 이상 없음 (변경 파일 {}개)\n", changed_rel_paths.len()),
             ));
@@ -600,6 +609,7 @@ fn evaluate_impact_on_notes(
     if matched_note_ids.is_empty() {
         return Ok((
             0,
+            0,
             format!("결합 점검 이상 없음 (변경 파일 {}개)\n", changed_rel_paths.len()),
         ));
     }
@@ -650,15 +660,15 @@ fn evaluate_impact_on_notes(
         }
     }
 
-    Ok((matched_note_ids.len(), format!("{}\n", lines.join("\n"))))
+    Ok((matched_note_ids.len(), unchecked.len(), format!("{}\n", lines.join("\n"))))
 }
 
-pub fn run_impact(
+pub fn run_impact_detailed(
     root: &Path,
     cwd: &Path,
     base: Option<&str>,
     explicit_paths: &[String],
-) -> Result<(usize, usize, String), ImpactError> {
+) -> Result<ImpactSummary, ImpactError> {
     let changed: Vec<String> = if !explicit_paths.is_empty() {
         let mut set = BTreeSet::new();
         for raw in explicit_paths {
@@ -678,6 +688,22 @@ pub fn run_impact(
     };
 
     let changed_cnt = changed.len();
-    let (hit_notes, report) = evaluate_impact_on_notes(root, &changed)?;
-    Ok((changed_cnt, hit_notes, report))
+    let (hit_notes, unchecked_count, report) = evaluate_impact_on_notes(root, &changed)?;
+    Ok(ImpactSummary {
+        changed: changed_cnt,
+        changed_paths: changed,
+        hit_notes,
+        unchecked_count,
+        report,
+    })
+}
+
+pub fn run_impact(
+    root: &Path,
+    cwd: &Path,
+    base: Option<&str>,
+    explicit_paths: &[String],
+) -> Result<(usize, usize, String), ImpactError> {
+    let s = run_impact_detailed(root, cwd, base, explicit_paths)?;
+    Ok((s.changed, s.hit_notes, s.report))
 }

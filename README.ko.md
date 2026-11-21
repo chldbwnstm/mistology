@@ -83,11 +83,11 @@ https://github.com/chldbwnstm/mistology 를 설치하고(`cargo install --git ht
 > **이미 이 저장소를 로컬에 클론한 상태라면?** 아래 한 줄만 붙여넣으세요:
 > ``현재 폴더의 mistology를 빌드·설치하고(`cargo install --path . --locked`), mistology setup 실행 후 동작까지 확인해줘.``
 
-`mistology setup`은 바이너리 안에 내장된 `SKILL.md`를 설치된 코딩 에이전트 폴더(`~/.claude`, `~/.gemini`, `~/.codex`, `~/.cursor`, `~/.agents`)에 직접 기록합니다. 클론 폴더를 남겨 둘 필요도, `/tmp` 심볼릭 링크가 깨질 걱정도 없으며, 프로젝트별 `init` 명령 없이 첫 오답 기록 시 `.mistology/notes/`와 `.mistology/.gitignore`가 자동 생성됩니다(팀 저장소 공유 스킬로 넣으려면 `mistology setup --project`를 시키면 됩니다).
+`mistology setup` 한 번으로 바이너리 내장 `SKILL.md`와 **크로스플랫폼 전역 자동 훅(`mistology hook`) · 상시 규칙**이 감지된 코딩 에이전트(`~/.gemini/config/hooks.json`, `~/.claude/settings.json`, `~/.codex/hooks.json`, `~/.cursor/rules/mistology.mdc`, `~/.agents`)에 기존 설정을 보존하며 자동 연결됩니다. 외부 쉘/파워쉘 스크립트 없이 바이너리가 직접 stdin/stdout JSON을 처리하므로 macOS · Linux · Windows(`mistology.exe`)에서 동일하게 동작하며, **프로젝트마다 별도 설정 없이도** 작업 시작 자동 검색 · 에러 시 자동 검색 · 턴 종료 전 1회 한정 파급/기록 누락 방지 게이트가 자동 작동합니다. (스킬만 설치하려면 `mistology setup --no-hooks`, 등록된 훅만 깔끔히 제거하려면 `mistology setup --uninstall-hooks`, 팀 저장소 공유 스킬은 `mistology setup --project`를 사용하세요.)
 
-### 2. 프로젝트 상시 강제 설정 — 규칙 & 훅 자동 연결 *(권장 · 저장소당 최초 1회)*
+### 2. 팀 공유 저장소 규칙 추가 *(선택 · 팀 협업 시)*
 
-스킬(`SKILL.md`)만 설치해 두면 에이전트가 필요성을 떠올릴 때만 호출하거나 서브에이전트에서 건너뛸 수 있습니다. 프로젝트 루트에서 아래 프롬프트를 붙여넣으면 **규칙 파일(`AGENTS.md` / `CLAUDE.md`)과 에이전트 훅까지 기존 설정을 해치지 않고 한 번에 세팅**해 줍니다:
+개인 머신에서는 1단계(`mistology setup`)만으로 전역 자동 훅이 상시 동작합니다. 팀원 전원이나 서브에이전트 워크트리 환경에 저장소 규칙 파일(`AGENTS.md` / `CLAUDE.md`)까지 커밋해 두고 싶다면 아래 프롬프트를 실행하세요:
 
 ```text
 이 저장소에서 코딩 에이전트(서브에이전트 포함)가 항상 빠짐없이 `mistology`를 사용하도록 설정해줘:

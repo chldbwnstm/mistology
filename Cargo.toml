@@ -1,8 +1,8 @@
 [package]
 name = "mistology"
-version = "0.2.0"
+version = "0.3.0"
 edition = "2021"
-rust-version = "1.85"
+rust-version = "1.89"
 description = "Project-local mistake ontology CLI & agent skill powered by SQLite FTS5 and directed 2-hop coupling graphs"
 repository = "https://github.com/chldbwnstm/mistology"
 homepage = "https://github.com/chldbwnstm/mistology"

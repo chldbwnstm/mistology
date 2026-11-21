@@ -1,4 +1,5 @@
 pub mod diag;
+pub mod hook;
 pub mod impact;
 pub mod index;
 pub mod note;
@@ -6,6 +7,7 @@ pub mod note;
 use clap::{Args, Parser, Subcommand};
 use std::ffi::OsString;
 use std::fs;
+use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::time::Instant;
 
@@ -106,7 +108,7 @@ enum Cmd {
         #[arg(help = "점검할 파일 경로 (생략 시 Git 변경 파일 자동 수집)")]
         paths: Vec<String>,
     },
-    /// 내장된 mistology 에이전트 스킬(SKILL.md)을 코딩 에이전트 폴더에 자동 설치
+    /// 내장된 mistology 에이전트 스킬(SKILL.md)과 전역 자동 훅/상시 규칙을 코딩 에이전트 폴더에 자동 설치
     Setup {
         #[arg(long, help = "현재 저장소(.agents/skills/mistology)에 프로젝트 스킬로 설치")]
         project: bool,
@@ -114,6 +116,23 @@ enum Cmd {
         all: bool,
         #[arg(long, help = "기존 심볼릭 링크도 내장 스킬 파일로 교체")]
         force: bool,
+        #[arg(long, help = "전역 에이전트 훅·상시 규칙 등록은 건너뛰고 스킬만 설치")]
+        no_hooks: bool,
+        #[arg(
+            long,
+            conflicts_with_all = ["no_hooks", "project", "all"],
+            help = "등록된 MISTOLOGY 전역 훅·상시 규칙만 안전하게 제거"
+        )]
+        uninstall_hooks: bool,
+        #[arg(long, hide = true)]
+        home: Option<PathBuf>,
+    },
+    /// 코딩 에이전트 라이프사이클 훅 핸들러 (stdin JSON -> stdout JSON, 항상 fail-open)
+    Hook {
+        #[arg(value_enum)]
+        agent: hook::HookAgent,
+        #[arg(value_enum)]
+        event: Option<hook::HookEvent>,
         #[arg(long, hide = true)]
         home: Option<PathBuf>,
     },
@@ -405,7 +424,21 @@ where
                 }
             }
         }
-        Cmd::Setup { project, all, force, home } => run_setup(&root, project, all, force, home),
+        Cmd::Setup {
+            project,
+            all,
+            force,
+            no_hooks,
+            uninstall_hooks,
+            home,
+        } => run_setup(&root, project, all, force, no_hooks, uninstall_hooks, home),
+        Cmd::Hook { agent, event, home } => {
+            let mut raw = String::new();
+            let _ = std::io::stdin()
+                .take(1024 * 1024)
+                .read_to_string(&mut raw);
+            Ok(hook::run_hook(cwd, agent, event, &raw, home.as_deref()))
+        }
         Cmd::Doctor { home } => {
             let eff_home = home.or(default_home);
             let bin_in_path = std::env::current_exe()
@@ -535,9 +568,19 @@ fn run_setup(
     project: bool,
     all: bool,
     force: bool,
+    no_hooks: bool,
+    uninstall_hooks: bool,
     home_override: Option<PathBuf>,
 ) -> Result<String, String> {
     let custom_home = home_override.is_some();
+    if uninstall_hooks {
+        let home = home_override
+            .or_else(resolve_default_home)
+            .ok_or_else(|| "홈 디렉터리(HOME/USERPROFILE)를 찾을 수 없습니다.".to_string())?;
+        let lines = hook::uninstall_agent_hooks(&home)?;
+        return Ok(format!("{}\n", lines.join("\n")));
+    }
+
     let (base, rel_targets): (PathBuf, Vec<&'static str>) = if project {
         let mut rels = vec![".agents/skills/mistology"];
         for (probe, rel) in [
@@ -581,6 +624,10 @@ fn run_setup(
     for rel in rel_targets {
         let (status, file_path) = install_skill_dir(&base, rel, force)?;
         lines.push(format!("[{status}] {}", file_path.display()));
+    }
+
+    if !project && !no_hooks {
+        lines.extend(hook::install_agent_hooks(&base, all, custom_home)?);
     }
 
     if !project && !custom_home {

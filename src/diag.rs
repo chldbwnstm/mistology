@@ -1,4 +1,4 @@
-use crate::{index, note};
+use crate::{hook, index, note};
 use rusqlite::{Connection, OpenFlags};
 use serde_json::{json, Value};
 use std::collections::BTreeMap;
@@ -575,6 +575,15 @@ pub fn run_doctor(
         lines.push("  - (탐지된 에이전트 스킬 경로 없음)".to_string());
     } else {
         lines.extend(skill_lines);
+    }
+
+    // 5. Global hook / Always-On status
+    if let Some(h) = home {
+        let hook_lines = hook::inspect_agent_hooks(h);
+        if !hook_lines.is_empty() {
+            lines.push("- hooks:".to_string());
+            lines.extend(hook_lines);
+        }
     }
 
     format!("{}\n", lines.join("\n"))

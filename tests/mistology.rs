@@ -3360,3 +3360,600 @@ fn round3_counterexamples_root_symlinks_colon_logs_root_vs_sub_aliases_and_io_pr
         "SQLITE_ERROR (ErrorCode::Unknown, e.g. oversized LIKE pattern) must NEVER delete healthy index.db"
     );
 }
+
+#[test]
+fn setup_auto_hooks_merge_idempotency_ownership_symlinks_and_uninstall() {
+    use mistology::hook::{format_hook_command_for_platform, HookAgent, HookEvent};
+
+    // 1. Cross-platform shell command quoting & unsafe character rejection
+    assert_eq!(
+        format_hook_command_for_platform("/Users/a b/o'reilly/mistology", HookAgent::Gemini, HookEvent::Stop, false).as_deref(),
+        Some("'/Users/a b/o'\\''reilly/mistology' hook gemini stop")
+    );
+    assert_eq!(
+        format_hook_command_for_platform(r"C:\Users\alice\.cargo\bin\mistology.exe", HookAgent::Claude, HookEvent::UserPromptSubmit, true).as_deref(),
+        Some("C:/Users/alice/.cargo/bin/mistology.exe hook claude user-prompt-submit")
+    );
+    assert_eq!(
+        format_hook_command_for_platform(r"C:\Program Files\mistology\mistology.exe", HookAgent::Gemini, HookEvent::Stop, true).as_deref(),
+        Some(r#""C:\Program Files\mistology\mistology.exe" hook gemini stop"#)
+    );
+    assert!(
+        format_hook_command_for_platform(r"C:\Program Files\mistology\mistology.exe", HookAgent::Claude, HookEvent::UserPromptSubmit, true).is_none(),
+        "Windows space-containing path must be skipped for Claude PowerShell launcher"
+    );
+    assert!(
+        format_hook_command_for_platform(r"C:\Users\%TEMP%\mistology.exe", HookAgent::Gemini, HookEvent::Stop, true).is_none(),
+        "Windows cmd /c percent expansion path must be rejected"
+    );
+    assert!(
+        format_hook_command_for_platform(r"C:\Users\a&b\mistology.exe", HookAgent::Gemini, HookEvent::Stop, true).is_none(),
+        "Windows cmd /c metacharacter path must be rejected"
+    );
+
+    // 2. Global setup installs skills + merges hooks preserving sibling hooks, unknown fields, and user configs
+    let repo = TempDir::new();
+    let home = TempDir::new();
+    fs::create_dir_all(repo.path().join(".git")).unwrap();
+    fs::create_dir_all(home.path().join(".gemini/config")).unwrap();
+    fs::create_dir_all(home.path().join(".claude")).unwrap();
+    fs::create_dir_all(home.path().join(".codex")).unwrap();
+    fs::create_dir_all(home.path().join(".cursor")).unwrap();
+
+    // Seed existing user hooks & settings
+    fs::write(
+        home.path().join(".gemini/config/hooks.json"),
+        r#"{
+  "existing-user-hook": {
+    "enabled": false,
+    "Stop": [{ "type": "command", "command": "./user-stop.sh", "timeout": 10 }]
+  }
+}"#,
+    )
+    .unwrap();
+    fs::write(
+        home.path().join(".claude/settings.json"),
+        r#"{
+  "theme": "dark",
+  "hooks": {
+    "UserPromptSubmit": [
+      { "hooks": [{ "type": "command", "command": "/usr/local/bin/other-tool", "timeout": 5 }] }
+    ]
+  }
+}"#,
+    )
+    .unwrap();
+    fs::write(
+        home.path().join(".codex/hooks.json"),
+        r#"{
+  "hooks": {
+    "Stop": [{ "hooks": [{ "type": "command", "command": "/usr/local/bin/codex-other", "timeout": 5 }] }]
+  }
+}"#,
+    )
+    .unwrap();
+
+    let out1 = mistology::run_cli(
+        repo.path(),
+        ["mistology", "setup", "--home", home.path().to_str().unwrap()],
+    )
+    .unwrap();
+    assert!(out1.contains("[훅 등록 완료]") && out1.contains("[상시 규칙 등록 완료]"), "{out1}");
+
+    // Re-running `mistology setup` must be idempotent (no duplicate entries!)
+    let _ = mistology::run_cli(
+        repo.path(),
+        ["mistology", "setup", "--home", home.path().to_str().unwrap()],
+    )
+    .unwrap();
+
+    let gem_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(home.path().join(".gemini/config/hooks.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(gem_json["existing-user-hook"]["enabled"], false);
+    assert_eq!(
+        gem_json["mistology"]["Stop"][0]["command"],
+        "mistology hook gemini stop"
+    );
+    assert_eq!(
+        gem_json["mistology"]["PreInvocation"][0]["command"],
+        "mistology hook gemini pre-invocation"
+    );
+
+    let claude_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(home.path().join(".claude/settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(claude_json["theme"], "dark");
+    let ups = claude_json["hooks"]["UserPromptSubmit"].as_array().unwrap();
+    assert_eq!(ups.len(), 2, "must preserve existing sibling hook + add exactly 1 mistology entry: {ups:?}");
+    assert_eq!(ups[0]["hooks"][0]["command"], "/usr/local/bin/other-tool");
+    assert_eq!(ups[1]["hooks"][0]["command"], "mistology hook claude user-prompt-submit");
+
+    let codex_json: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(home.path().join(".codex/hooks.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(codex_json["hooks"]["Stop"].as_array().unwrap().len(), 2);
+
+    let cursor_mdc = fs::read_to_string(home.path().join(".cursor/rules/mistology.mdc")).unwrap();
+    assert!(cursor_mdc.contains("alwaysApply: true") && cursor_mdc.contains("<!-- mistology:managed -->"));
+
+    // Doctor reports all 4 hooks (with Codex trust pending until `.hook-trust` exists) while redacting home path
+    let doc = mistology::run_cli(
+        repo.path(),
+        ["mistology", "doctor", "--home", home.path().to_str().unwrap()],
+    )
+    .unwrap();
+    assert!(
+        doc.contains("- hooks:")
+            && doc.contains("`~/.gemini/config/hooks.json`: 활성")
+            && doc.contains("`~/.claude/settings.json`: 활성")
+            && doc.contains("`~/.codex/hooks.json`: 등록됨 (Codex 훅 신뢰 상태 미확인)")
+            && doc.contains("`~/.cursor/rules/mistology.mdc`: 활성 (alwaysApply)"),
+        "doctor must show active hooks & Codex pending trust:\n{doc}"
+    );
+    assert!(!doc.contains(home.path().to_str().unwrap()));
+
+    // Duplicate JSON keys must be rejected without modifying file, and edited Cursor file keeping marker must be preserved!
+    let edited_cursor = format!("{cursor_mdc}\n# user custom note\n");
+    fs::write(home.path().join(".cursor/rules/mistology.mdc"), &edited_cursor).unwrap();
+    let dup_json = r#"{"hooks": {}, "hooks": {}}"#;
+    fs::write(home.path().join(".codex/hooks.json"), dup_json).unwrap();
+    let dup_setup = mistology::run_cli(
+        repo.path(),
+        ["mistology", "setup", "--force", "--home", home.path().to_str().unwrap()],
+    )
+    .unwrap();
+    assert!(
+        dup_setup.contains("중복 JSON 키 감지") && dup_setup.contains("사용자 편집 규칙 보존"),
+        "must reject duplicate JSON keys and preserve edited Cursor file even when marker remains:\n{dup_setup}"
+    );
+    assert_eq!(fs::read_to_string(home.path().join(".codex/hooks.json")).unwrap(), dup_json);
+    assert_eq!(fs::read_to_string(home.path().join(".cursor/rules/mistology.mdc")).unwrap(), edited_cursor);
+    // Restore exact Cursor rule & Codex hooks for uninstall test below
+    fs::write(home.path().join(".cursor/rules/mistology.mdc"), &cursor_mdc).unwrap();
+    fs::write(home.path().join(".codex/hooks.json"), "{}").unwrap();
+    let _ = mistology::run_cli(
+        repo.path(),
+        ["mistology", "setup", "--home", home.path().to_str().unwrap()],
+    )
+    .unwrap();
+
+    // Conflicting flags must fail
+    assert!(
+        mistology::run_cli(
+            repo.path(),
+            ["mistology", "setup", "--uninstall-hooks", "--no-hooks", "--home", home.path().to_str().unwrap()]
+        )
+        .is_err()
+    );
+
+    // Uninstall removes ONLY MISTOLOGY-owned entries, leaving sibling hooks & settings intact
+    let uninst = mistology::run_cli(
+        repo.path(),
+        ["mistology", "setup", "--uninstall-hooks", "--home", home.path().to_str().unwrap()],
+    )
+    .unwrap();
+    assert!(uninst.contains("[훅 제거 완료]") && uninst.contains("[상시 규칙 제거 완료]"), "{uninst}");
+
+    let gem_after: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(home.path().join(".gemini/config/hooks.json")).unwrap(),
+    )
+    .unwrap();
+    assert!(gem_after.get("mistology").is_none());
+    assert!(gem_after.get("existing-user-hook").is_some());
+
+    let claude_after: serde_json::Value = serde_json::from_str(
+        &fs::read_to_string(home.path().join(".claude/settings.json")).unwrap(),
+    )
+    .unwrap();
+    assert_eq!(claude_after["hooks"]["UserPromptSubmit"].as_array().unwrap().len(), 1);
+    assert_eq!(claude_after["hooks"]["UserPromptSubmit"][0]["hooks"][0]["command"], "/usr/local/bin/other-tool");
+    assert!(claude_after["hooks"].get("Stop").is_none(), "empty event array must be cleaned up");
+    assert!(!home.path().join(".cursor/rules/mistology.mdc").exists());
+
+    // Malformed JSON and user-owned `mistology` key / user-edited Cursor rule must NOT be overwritten!
+    fs::write(home.path().join(".claude/settings.json"), "{ invalid json").unwrap();
+    fs::write(
+        home.path().join(".gemini/config/hooks.json"),
+        r#"{ "mistology": { "Stop": [{ "type": "command", "command": "./my-custom-hook.sh" }] } }"#,
+    )
+    .unwrap();
+    fs::create_dir_all(home.path().join(".cursor/rules")).unwrap();
+    fs::write(home.path().join(".cursor/rules/mistology.mdc"), "# my custom rule\n").unwrap();
+
+    let guarded = mistology::run_cli(
+        repo.path(),
+        ["mistology", "setup", "--force", "--home", home.path().to_str().unwrap()],
+    )
+    .unwrap();
+    assert!(guarded.contains("JSON 파싱 실패") && guarded.contains("사용자 정의 mistology 훅 보존") && guarded.contains("사용자 편집 규칙 보존"), "{guarded}");
+    assert_eq!(fs::read_to_string(home.path().join(".claude/settings.json")).unwrap(), "{ invalid json");
+    assert_eq!(fs::read_to_string(home.path().join(".cursor/rules/mistology.mdc")).unwrap(), "# my custom rule\n");
+
+    // Round-trip ownership: `/opt/R&D/mistology` inside single quotes IS managed, while `'env' 'mistology'` wrapper is NOT!
+    let rd_cmd = format_hook_command_for_platform("/opt/R&D/mistology", HookAgent::Gemini, HookEvent::Stop, false).unwrap();
+    assert_eq!(rd_cmd, "'/opt/R&D/mistology' hook gemini stop");
+    let home_rd = TempDir::new();
+    fs::create_dir_all(home_rd.path().join(".gemini/config")).unwrap();
+    fs::write(
+        home_rd.path().join(".gemini/config/hooks.json"),
+        serde_json::json!({
+            "mistology": {
+                "SessionStart": [{ "type": "command", "command": "'/opt/R&D/mistology' hook gemini session-start", "timeout": 5 }],
+                "PreInvocation": [{ "type": "command", "command": "'/opt/R&D/mistology' hook gemini pre-invocation", "timeout": 5 }],
+                "PostToolUse": [{ "matcher": "run_command", "hooks": [{ "type": "command", "command": "'/opt/R&D/mistology' hook gemini post-tool-use", "timeout": 5 }] }],
+                "Stop": [{ "type": "command", "command": "'/opt/R&D/mistology' hook gemini stop", "timeout": 5 }]
+            }
+        }).to_string(),
+    ).unwrap();
+    let rd_uninst = mistology::run_cli(
+        repo.path(),
+        ["mistology", "setup", "--uninstall-hooks", "--home", home_rd.path().to_str().unwrap()],
+    ).unwrap();
+    assert!(rd_uninst.contains("[훅 제거 완료]"), "quoted /opt/R&D/mistology must round-trip as owned:\n{rd_uninst}");
+
+    // Wrapper `'env' 'mistology' hook gemini stop` and relative `'./mistology' hook gemini stop` must NEVER be treated as MISTOLOGY-owned!
+    for custom_cmd in [
+        "'env' 'mistology' hook gemini stop",
+        "'./mistology' hook gemini stop",
+    ] {
+        fs::write(
+            home_rd.path().join(".gemini/config/hooks.json"),
+            serde_json::json!({
+                "mistology": {
+                    "SessionStart": [{ "type": "command", "command": "'/opt/R&D/mistology' hook gemini session-start", "timeout": 5 }],
+                    "PreInvocation": [{ "type": "command", "command": "'/opt/R&D/mistology' hook gemini pre-invocation", "timeout": 5 }],
+                    "PostToolUse": [{ "matcher": "run_command", "hooks": [{ "type": "command", "command": "'/opt/R&D/mistology' hook gemini post-tool-use", "timeout": 5 }] }],
+                    "Stop": [{ "type": "command", "command": custom_cmd, "timeout": 5 }]
+                }
+            }).to_string(),
+        ).unwrap();
+        let wrap_setup = mistology::run_cli(
+            repo.path(),
+            ["mistology", "setup", "--home", home_rd.path().to_str().unwrap()],
+        ).unwrap();
+        assert!(wrap_setup.contains("사용자 정의 mistology 훅 보존"), "custom {custom_cmd} must NOT be overwritten:\n{wrap_setup}");
+    }
+
+    // Windows UNC executable (`//server/share/mistology.exe`) must round-trip as owned on uninstall!
+    let unc_cmd = format_hook_command_for_platform(r"\\server\share\mistology.exe", HookAgent::Claude, HookEvent::Stop, true).unwrap();
+    assert_eq!(unc_cmd, "//server/share/mistology.exe hook claude stop");
+    fs::create_dir_all(home_rd.path().join(".claude")).unwrap();
+    fs::write(
+        home_rd.path().join(".claude/settings.json"),
+        serde_json::json!({
+            "hooks": {
+                "Stop": [{ "hooks": [{ "type": "command", "command": unc_cmd, "timeout": 5 }] }]
+            }
+        }).to_string(),
+    ).unwrap();
+    let unc_uninst = mistology::run_cli(
+        repo.path(),
+        ["mistology", "setup", "--uninstall-hooks", "--home", home_rd.path().to_str().unwrap()],
+    ).unwrap();
+    assert!(unc_uninst.contains("[훅 제거 완료]"), "Windows UNC Claude hook must round-trip as owned:\n{unc_uninst}");
+
+    // `--no-hooks` installs skills only without touching hooks
+    let home2 = TempDir::new();
+    fs::create_dir_all(home2.path().join(".gemini")).unwrap();
+    let _ = mistology::run_cli(
+        repo.path(),
+        ["mistology", "setup", "--no-hooks", "--home", home2.path().to_str().unwrap()],
+    )
+    .unwrap();
+    assert!(!home2.path().join(".gemini/config/hooks.json").exists());
+}
+
+#[test]
+fn hook_runtime_auto_search_error_capture_and_stop_gate_without_loops() {
+    use mistology::hook::{run_hook, HookAgent, HookEvent};
+    use std::process::Command;
+
+    let home = TempDir::new();
+    let plain = TempDir::new();
+
+    // 1. Non-git, non-.mistology directory -> silent fail-open `{}`
+    let plain_out = run_hook(
+        plain.path(),
+        HookAgent::Gemini,
+        Some(HookEvent::SessionStart),
+        &format!(r#"{{"cwd":"{}","conversationId":"c0"}}"#, plain.path().to_string_lossy().replace('\\', "\\\\")),
+        Some(home.path()),
+    );
+    assert_eq!(plain_out.trim(), "{}");
+
+    // 2. Real git repo with a coupled note
+    let repo = TempDir::new();
+    let git = |args: &[&str]| {
+        let out = Command::new("git").arg("-C").arg(repo.path()).args(args).output().unwrap();
+        assert!(out.status.success(), "git {:?} failed: {}", args, String::from_utf8_lossy(&out.stderr));
+    };
+    git(&["init", "-b", "main"]);
+    git(&["config", "user.name", "Test"]);
+    git(&["config", "user.email", "test@example.com"]);
+    fs::create_dir_all(repo.path().join("src")).unwrap();
+    fs::write(repo.path().join("src/parser.rs"), "pub fn parse() {}\n").unwrap();
+    fs::write(repo.path().join("src/validator.rs"), "pub fn check() {}\n").unwrap();
+
+    note::new_note(
+        repo.path(),
+        NewFields {
+            problem: "파서 토큰 경계 변경 시 검증기 파손",
+            tried: "parser.rs만 수정",
+            evidence: "TokenBoundaryMismatch: expected EOF",
+            why: "처음부터 틀림: validator.rs와 토큰 경계 계약 불일치",
+            fix: "src/parser.rs와 src/validator.rs의 경계 상수를 함께 맞출 것",
+            verified: "통합 테스트 통과",
+            next_step: "validator.rs 테스트 실행",
+            signatures: &svec(&["TokenBoundaryMismatch: expected EOF"]),
+            files: &svec(&["src/parser.rs"]),
+            symbols: &svec(&["parse_boundary"]),
+            coupled: &svec(&["src/validator.rs"]),
+            tags: &svec(&["parser"]),
+            force: false,
+        },
+    )
+    .unwrap();
+    git(&["add", "."]);
+    git(&["commit", "-m", "init"]);
+
+    let cwd_json = serde_json::to_string(&repo.path().to_string_lossy().to_string()).unwrap();
+
+    // 3. Antigravity SessionStart injects Always-On contract
+    let ss_out = run_hook(
+        repo.path(),
+        HookAgent::Gemini,
+        Some(HookEvent::SessionStart),
+        &format!(r#"{{"cwd":{cwd_json},"conversationId":"conv-1"}}"#),
+        Some(home.path()),
+    );
+    assert!(ss_out.contains("injectSteps") && ss_out.contains("MISTOLOGY 상시 규약"), "{ss_out}");
+
+    // 4. Antigravity PreInvocation searches `lastUserInput` ONCE per prompt (repeated invocationNum -> `{}`)
+    let pre1 = run_hook(
+        repo.path(),
+        HookAgent::Gemini,
+        Some(HookEvent::PreInvocation),
+        &format!(r#"{{"cwd":{cwd_json},"conversationId":"conv-1","invocationNum":1,"lastUserInput":"src/parser.rs 수정해줘"}}"#),
+        Some(home.path()),
+    );
+    assert!(pre1.contains("src/validator.rs") && pre1.contains("injectSteps"), "{pre1}");
+    let pre2 = run_hook(
+        repo.path(),
+        HookAgent::Gemini,
+        Some(HookEvent::PreInvocation),
+        &format!(r#"{{"cwd":{cwd_json},"conversationId":"conv-1","invocationNum":2,"lastUserInput":"src/parser.rs 수정해줘"}}"#),
+        Some(home.path()),
+    );
+    assert_eq!(pre2.trim(), "{}", "same prompt on invocationNum=2 must NOT re-inject");
+
+    // 5. Antigravity PostToolUse captures error -> next PreInvocation injects error brief ONCE
+    let post_err = run_hook(
+        repo.path(),
+        HookAgent::Gemini,
+        Some(HookEvent::PostToolUse),
+        &format!(r#"{{"cwd":{cwd_json},"conversationId":"conv-1","error":"TokenBoundaryMismatch: expected EOF","toolCall":{{"name":"run_command","args":{{"CommandLine":"cargo test"}}}}}}"#),
+        Some(home.path()),
+    );
+    assert_eq!(post_err.trim(), "{}");
+    let pre3 = run_hook(
+        repo.path(),
+        HookAgent::Gemini,
+        Some(HookEvent::PreInvocation),
+        &format!(r#"{{"cwd":{cwd_json},"conversationId":"conv-1","invocationNum":3,"lastUserInput":"src/parser.rs 수정해줘"}}"#),
+        Some(home.path()),
+    );
+    assert!(pre3.contains("직전 에러 관련") && pre3.contains("src/parser.rs"), "{pre3}");
+    let pre4 = run_hook(
+        repo.path(),
+        HookAgent::Gemini,
+        Some(HookEvent::PreInvocation),
+        &format!(r#"{{"cwd":{cwd_json},"conversationId":"conv-1","invocationNum":4,"lastUserInput":"src/parser.rs 수정해줘"}}"#),
+        Some(home.path()),
+    );
+    assert_eq!(pre4.trim(), "{}", "pending error brief must be cleared after single consumption");
+
+    // 6. Antigravity Stop gate:
+    // - Clean working tree -> `{}`
+    let stop_clean = run_hook(
+        repo.path(),
+        HookAgent::Gemini,
+        Some(HookEvent::Stop),
+        &format!(r#"{{"cwd":{cwd_json},"conversationId":"conv-1","continuationActive":false,"fullyIdle":true,"terminationReason":"NO_TOOL_CALL"}}"#),
+        Some(home.path()),
+    );
+    assert_eq!(stop_clean.trim(), "{}");
+
+    // - Edit `src/parser.rs` (leaving coupled `src/validator.rs` untouched) -> Stop nudges ONCE with both impact & record check!
+    fs::write(repo.path().join("src/parser.rs"), "pub fn parse() { /* edited */ }\n").unwrap();
+    // fullyIdle=false or USER_CANCELED or missing conversationId -> must fail-open `{}`!
+    assert_eq!(
+        run_hook(
+            repo.path(),
+            HookAgent::Gemini,
+            Some(HookEvent::Stop),
+            &format!(r#"{{"cwd":{cwd_json},"conversationId":"conv-1","continuationActive":false,"fullyIdle":false,"terminationReason":"NO_TOOL_CALL"}}"#),
+            Some(home.path()),
+        ).trim(),
+        "{}"
+    );
+    assert_eq!(
+        run_hook(
+            repo.path(),
+            HookAgent::Gemini,
+            Some(HookEvent::Stop),
+            &format!(r#"{{"cwd":{cwd_json},"continuationActive":false,"fullyIdle":true,"terminationReason":"NO_TOOL_CALL"}}"#),
+            Some(home.path()),
+        ).trim(),
+        "{}",
+        "missing conversationId must fail-open on Stop"
+    );
+
+    let stop_nudge = run_hook(
+        repo.path(),
+        HookAgent::Gemini,
+        Some(HookEvent::Stop),
+        &format!(r#"{{"cwd":{cwd_json},"conversationId":"conv-1","continuationActive":false,"fullyIdle":true,"terminationReason":"NO_TOOL_CALL"}}"#),
+        Some(home.path()),
+    );
+    let stop_val: serde_json::Value = serde_json::from_str(&stop_nudge).unwrap();
+    assert_eq!(stop_val["decision"], "continue");
+    let reason = stop_val["reason"].as_str().unwrap();
+    assert!(reason.contains("src/validator.rs") && reason.contains("MISTOLOGY 기록 확인"), "{reason}");
+
+    // - Replaying Stop on the same turn (even if continuationActive were false!) MUST return `{}` (atomic single-nudge claim!)
+    let stop_replay = run_hook(
+        repo.path(),
+        HookAgent::Gemini,
+        Some(HookEvent::Stop),
+        &format!(r#"{{"cwd":{cwd_json},"conversationId":"conv-1","continuationActive":false,"fullyIdle":true,"terminationReason":"NO_TOOL_CALL"}}"#),
+        Some(home.path()),
+    );
+    assert_eq!(stop_replay.trim(), "{}", "Stop must NEVER nudge twice in the same turn");
+
+    // 7. Claude Code & Codex hooks:
+    // - Pre-existing dirty worktree file untouched in `cl-1`'s turn must NOT trigger a false Stop nudge!
+    let cl_ups = run_hook(
+        repo.path(),
+        HookAgent::Claude,
+        Some(HookEvent::UserPromptSubmit),
+        &format!(r#"{{"cwd":{cwd_json},"session_id":"cl-1","prompt":"src/parser.rs 설명해줘"}}"#),
+        Some(home.path()),
+    );
+    assert!(cl_ups.contains("additionalContext") && cl_ups.contains("src/validator.rs"), "{cl_ups}");
+    let cl_stop_preexisting = run_hook(
+        repo.path(),
+        HookAgent::Claude,
+        Some(HookEvent::Stop),
+        &format!(r#"{{"cwd":{cwd_json},"session_id":"cl-1","stop_hook_active":false}}"#),
+        Some(home.path()),
+    );
+    assert_eq!(
+        cl_stop_preexisting.trim(),
+        "{}",
+        "pre-existing dirty files untouched in this turn must NOT trigger Stop nudge"
+    );
+
+    // - Now actually edit `src/parser.rs` during `cl-1`'s turn + hit PostToolUseFailure -> Stop blocks ONCE!
+    let cl_fail = run_hook(
+        repo.path(),
+        HookAgent::Claude,
+        Some(HookEvent::PostToolUseFailure),
+        &format!(r#"{{"cwd":{cwd_json},"session_id":"cl-1","error":"TokenBoundaryMismatch: expected EOF"}}"#),
+        Some(home.path()),
+    );
+    assert!(cl_fail.contains("additionalContext") && cl_fail.contains("src/parser.rs"), "{cl_fail}");
+    fs::write(repo.path().join("src/parser.rs"), "pub fn parse() { /* edited in cl-1 */ }\n").unwrap();
+
+    // Concurrent Stop delivery race: 2 simultaneous Stop calls on the same session/turn -> AT MOST ONE blocks!
+    let r_path1 = repo.path().to_path_buf();
+    let r_path2 = repo.path().to_path_buf();
+    let h_path1 = home.path().to_path_buf();
+    let h_path2 = home.path().to_path_buf();
+    let p_stop = format!(r#"{{"cwd":{cwd_json},"session_id":"cl-1","stop_hook_active":false}}"#);
+    let p_stop2 = p_stop.clone();
+    let t1 = std::thread::spawn(move || run_hook(&r_path1, HookAgent::Claude, Some(HookEvent::Stop), &p_stop, Some(&h_path1)));
+    let t2 = std::thread::spawn(move || run_hook(&r_path2, HookAgent::Claude, Some(HookEvent::Stop), &p_stop2, Some(&h_path2)));
+    let out_a = t1.join().unwrap();
+    let out_b = t2.join().unwrap();
+    let block_cnt = [&out_a, &out_b]
+        .iter()
+        .filter(|s| serde_json::from_str::<serde_json::Value>(s).unwrap()["decision"] == "block")
+        .count();
+    assert_eq!(block_cnt, 1, "concurrent Stop hooks must emit exactly 1 block (a={out_a}, b={out_b})");
+
+    // Antigravity documented `fullyIdle: true` / `terminationReason: "model_stop"` (omitting `continuationActive`) works!
+    let _ = run_hook(
+        repo.path(),
+        HookAgent::Gemini,
+        Some(HookEvent::PreInvocation),
+        &format!(r#"{{"cwd":{cwd_json},"conversationId":"conv-model-stop","invocationNum":1,"lastUserInput":"src/parser.rs 수정"}}"#),
+        Some(home.path()),
+    );
+    fs::write(repo.path().join("src/parser.rs"), "pub fn parse() { /* model_stop edit */ }\n").unwrap();
+    let gem_model_stop = run_hook(
+        repo.path(),
+        HookAgent::Gemini,
+        Some(HookEvent::Stop),
+        &format!(r#"{{"cwd":{cwd_json},"conversationId":"conv-model-stop","fullyIdle":true,"terminationReason":"model_stop"}}"#),
+        Some(home.path()),
+    );
+    assert_eq!(
+        serde_json::from_str::<serde_json::Value>(&gem_model_stop).unwrap()["decision"],
+        "continue",
+        "Antigravity fullyIdle=true/model_stop without continuationActive must trigger single nudge:\n{gem_model_stop}"
+    );
+
+    // Codex PostToolUse with standard MCP `isError: true` + `content[].text`, plus delayed stale-turn Stop rejection
+    let _ = run_hook(
+        repo.path(),
+        HookAgent::Codex,
+        Some(HookEvent::UserPromptSubmit),
+        &format!(r#"{{"cwd":{cwd_json},"session_id":"cx-1","turn_id":"turn-42","prompt":"src/parser.rs 점검"}}"#),
+        Some(home.path()),
+    );
+    let cx_fail = run_hook(
+        repo.path(),
+        HookAgent::Codex,
+        Some(HookEvent::PostToolUse),
+        &format!(r#"{{"cwd":{cwd_json},"session_id":"cx-1","turn_id":"turn-42","tool_response":{{"isError":true,"content":[{{"type":"text","text":"TokenBoundaryMismatch: expected EOF"}}]}}}}"#),
+        Some(home.path()),
+    );
+    assert!(cx_fail.contains("additionalContext") && cx_fail.contains("src/parser.rs"), "{cx_fail}");
+
+    // Editing an UNRELATED file (`src/unrelated.rs`) when `src/parser.rs` was ALREADY dirty pre-turn must NOT trigger coupled `src/validator.rs` impact!
+    fs::write(repo.path().join("src/unrelated.rs"), "pub fn u() {}\n").unwrap();
+    let cx_stop_stale = run_hook(
+        repo.path(),
+        HookAgent::Codex,
+        Some(HookEvent::Stop),
+        &format!(r#"{{"cwd":{cwd_json},"session_id":"cx-1","turn_id":"turn-OLD","stop_hook_active":false}}"#),
+        Some(home.path()),
+    );
+    assert_eq!(cx_stop_stale.trim(), "{}", "delayed Stop for stale turn_id must fail-open");
+    let cx_stop_cur = run_hook(
+        repo.path(),
+        HookAgent::Codex,
+        Some(HookEvent::Stop),
+        &format!(r#"{{"cwd":{cwd_json},"session_id":"cx-1","turn_id":"turn-42","stop_hook_active":false}}"#),
+        Some(home.path()),
+    );
+    let cx_stop_v: serde_json::Value = serde_json::from_str(&cx_stop_cur).unwrap();
+    assert_eq!(cx_stop_v["decision"], "block");
+    assert!(
+        !cx_stop_v["reason"].as_str().unwrap().contains("src/validator.rs"),
+        "per-path delta impact must NOT blame pre-turn dirty src/parser.rs when only src/unrelated.rs changed:\n{cx_stop_cur}"
+    );
+
+    // Delayed Codex PostToolUse from an older turn (`turn-41`) must NOT taint active `turn-43` with `saw_tool_error`!
+    let _ = run_hook(
+        repo.path(),
+        HookAgent::Codex,
+        Some(HookEvent::UserPromptSubmit),
+        &format!(r#"{{"cwd":{cwd_json},"session_id":"cx-2","turn_id":"turn-43","prompt":"unrelated edit"}}"#),
+        Some(home.path()),
+    );
+    let _ = run_hook(
+        repo.path(),
+        HookAgent::Codex,
+        Some(HookEvent::PostToolUse),
+        &format!(r#"{{"cwd":{cwd_json},"session_id":"cx-2","turn_id":"turn-41","tool_response":{{"isError":true,"content":[{{"type":"text","text":"stale error"}}]}}}}"#),
+        Some(home.path()),
+    );
+    fs::write(repo.path().join("src/unrelated.rs"), "pub fn u() { /* clean turn */ }\n").unwrap();
+    let cx2_stop = run_hook(
+        repo.path(),
+        HookAgent::Codex,
+        Some(HookEvent::Stop),
+        &format!(r#"{{"cwd":{cwd_json},"session_id":"cx-2","turn_id":"turn-43","stop_hook_active":false}}"#),
+        Some(home.path()),
+    );
+    assert_eq!(
+        cx2_stop.trim(),
+        "{}",
+        "stale turn-41 tool failure must NOT taint active turn-43 Stop gate"
+    );
+}
