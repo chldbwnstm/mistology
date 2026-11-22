@@ -1,0 +1,124 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 960 432" width="960" height="432" role="img" aria-label="Before vs After MISTOLOGY — Unprotected Terminal vs Guarded Terminal">
+  <defs>
+    <pattern id="termScan" width="4" height="4" patternUnits="userSpaceOnUse">
+      <rect x="0" y="0" width="4" height="1" fill="#FFFFFF" fill-opacity="0.018"/>
+    </pattern>
+  </defs>
+
+  <!-- Outer Matte Charcoal Frame -->
+  <rect x="1" y="1" width="958" height="430" rx="12" fill="#0A0A0A" stroke="#262626" stroke-width="1.5"/>
+  <rect x="2" y="2" width="956" height="428" rx="11" fill="url(#termScan)"/>
+
+  <!-- Top Header Strip -->
+  <text x="24" y="29" fill="#A3A3A3" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="11" font-weight="700" letter-spacing="1.2">TERMINAL DIFF  //  BEFORE (UNPROTECTED)  vs  AFTER (MISTOLOGY GUARDED)</text>
+  <text x="936" y="29" text-anchor="end" fill="#525252" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5">same ticket: add VND &amp; KWD currency</text>
+
+  <!-- ========================================================= -->
+  <!-- LEFT TERMINAL: BEFORE (UNPROTECTED / ZERO DEFENSE)        -->
+  <!-- ========================================================= -->
+  <g transform="translate(20, 44)">
+    <rect x="0" y="0" width="450" height="368" rx="8" fill="#0E0B0B" stroke="#451A1A" stroke-width="1.3"/>
+    <!-- Titlebar -->
+    <path d="M0 8 Q0 0 8 0 L442 0 Q450 0 450 8 L450 30 L0 30 Z" fill="#181111"/>
+    <line x1="0" y1="30" x2="450" y2="30" stroke="#3B1818" stroke-width="1"/>
+    <circle cx="16" cy="15" r="4.2" fill="#EF4444"/>
+    <circle cx="30" cy="15" r="4.2" fill="#525252"/>
+    <circle cx="44" cy="15" r="4.2" fill="#525252"/>
+    <text x="60" y="19" fill="#FCA5A5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="700">BEFORE · NO MISTOLOGY</text>
+    <!-- Exposed Badge -->
+    <rect x="314" y="6" width="126" height="18" rx="4" fill="#3B1111" stroke="#991B1B" stroke-width="1"/>
+    <text x="377" y="18.5" text-anchor="middle" fill="#FCA5A5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.2" font-weight="700">UNPROTECTED · 0 GUARDS</text>
+
+    <!-- Terminal Body -->
+    <g font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.2">
+      <text x="14" y="52" fill="#737373">1.</text>
+      <text x="32" y="52" fill="#E5E5E5">$ agent &quot;add VND &amp; KWD to currency.py&quot;</text>
+
+      <text x="14" y="72" fill="#F87171">[WARN]</text>
+      <text x="58" y="72" fill="#A3A3A3">preflight: NONE (reading 3,000-line .md or blind)</text>
+
+      <text x="14" y="96" fill="#737373">2.</text>
+      <text x="32" y="96" fill="#D4D4D4">edit  services/fx/currency.py</text>
+      <text x="32" y="113" fill="#FCA5A5">  ├─ writes duplicate format_minor() helper</text>
+      <text x="32" y="130" fill="#FCA5A5">  ├─ repeats deprecated v1 branch (KRW/JPY only)</text>
+      <text x="32" y="147" fill="#F87171">  └─ misses coupled settlement.py &amp; csv_export.py</text>
+
+      <text x="14" y="173" fill="#737373">3.</text>
+      <text x="32" y="173" fill="#E5E5E5">$ pytest tests/test_settlement.py</text>
+      <rect x="14" y="182" width="422" height="58" rx="4" fill="#1C0E0E" stroke="#5C1D1D" stroke-width="1"/>
+      <text x="22" y="198" fill="#F87171" font-weight="700">FAILED test_vnd_settlement_fee</text>
+      <text x="22" y="214" fill="#FCA5A5">KeyError: &#39;VND&#39; in SETTLEMENT_FEE_BPS</text>
+      <text x="22" y="230" fill="#FCA5A5">AssertionError: KWD 1.250 truncated to 1.25 (csv)</text>
+
+      <text x="14" y="261" fill="#737373">4.</text>
+      <text x="32" y="261" fill="#A3A3A3">agent patches symptom, skips impact check</text>
+      <text x="32" y="278" fill="#F87171">  ├─ 2-hop csv_export.py still silently broken</text>
+      <text x="32" y="295" fill="#F87171">  └─ 0 lessons saved → next session repeats trap</text>
+
+      <text x="14" y="321" fill="#F59E0B">RESULT:</text>
+      <text x="64" y="321" fill="#FCA5A5">duplicate code + hidden regression + decoherence++</text>
+    </g>
+
+    <!-- tmux-style Bottom Status Bar -->
+    <path d="M0 342 L450 342 L450 360 Q450 368 442 368 L8 368 Q0 368 0 360 Z" fill="#2A0F0F"/>
+    <line x1="0" y1="342" x2="450" y2="342" stroke="#5C1D1D" stroke-width="1"/>
+    <text x="12" y="359" fill="#FCA5A5" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.5" font-weight="700">[EXPOSED]</text>
+    <text x="76" y="359" fill="#D4D4D4" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.5">29k tok blind · 0/2 coupled caught · 0 notes</text>
+  </g>
+
+  <!-- ========================================================= -->
+  <!-- RIGHT TERMINAL: AFTER (MISTOLOGY v0.3.0 GUARDED)          -->
+  <!-- ========================================================= -->
+  <g transform="translate(490, 44)">
+    <rect x="0" y="0" width="450" height="368" rx="8" fill="#090F0B" stroke="#14532D" stroke-width="1.3"/>
+    <!-- Titlebar -->
+    <path d="M0 8 Q0 0 8 0 L442 0 Q450 0 450 8 L450 30 L0 30 Z" fill="#0F1A13"/>
+    <line x1="0" y1="30" x2="450" y2="30" stroke="#164E2E" stroke-width="1"/>
+    <circle cx="16" cy="15" r="4.2" fill="#525252"/>
+    <circle cx="30" cy="15" r="4.2" fill="#525252"/>
+    <circle cx="44" cy="15" r="4.2" fill="#22C55E"/>
+    <text x="60" y="19" fill="#86EFAC" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.5" font-weight="700">AFTER · MISTOLOGY v0.3</text>
+    <!-- Guarded Badge -->
+    <rect x="314" y="6" width="126" height="18" rx="4" fill="#0A2E1A" stroke="#16A34A" stroke-width="1"/>
+    <text x="377" y="18.5" text-anchor="middle" fill="#4ADE80" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.2" font-weight="700">GUARDED · AUTO-HOOKS</text>
+
+    <!-- Terminal Body -->
+    <g font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="10.2">
+      <text x="14" y="52" fill="#525252">1.</text>
+      <text x="32" y="52" fill="#E5E5E5">$ agent &quot;add VND &amp; KWD to currency.py&quot;</text>
+
+      <text x="14" y="72" fill="#4ADE80">[HOOK]</text>
+      <text x="58" y="72" fill="#A3E635">mistology search -b (4.0 ms · 320 tok)</text>
+
+      <rect x="14" y="81" width="422" height="72" rx="4" fill="#0B1911" stroke="#166534" stroke-width="1"/>
+      <text x="22" y="97" fill="#4ADE80" font-weight="700">★CANON  currency.py → reuse CURRENCY_EXPONENTS</text>
+      <text x="22" y="113" fill="#86EFAC">1-HOP   ← settlement.py (sync LEDGER_MINOR_DIVISORS)</text>
+      <text x="22" y="129" fill="#86EFAC">2-HOP   ← csv_export.py (sync REPORT_DECIMALS)</text>
+      <text x="22" y="145" fill="#FBBF24">AVOID   v1: hardcoded KRW/JPY · default divisor 100</text>
+
+      <text x="14" y="173" fill="#525252">2.</text>
+      <text x="32" y="173" fill="#D4D4D4">agent updates all 3 coupled files on 1st pass</text>
+      <text x="32" y="190" fill="#4ADE80">  ✓ currency.py  ✓ settlement.py  ✓ csv_export.py</text>
+
+      <text x="14" y="214" fill="#525252">3.</text>
+      <text x="32" y="214" fill="#E5E5E5">$ pytest tests/ &amp;&amp; mistology impact</text>
+      <rect x="14" y="223" width="422" height="44" rx="4" fill="#0B1911" stroke="#166534" stroke-width="1"/>
+      <text x="22" y="239" fill="#4ADE80" font-weight="700">PASSED  15/15 tests (0 regressions)</text>
+      <text x="22" y="255" fill="#86EFAC">IMPACT  0 unchecked coupled files (3/3 co-modified)</text>
+
+      <text x="14" y="287" fill="#525252">4.</text>
+      <text x="32" y="287" fill="#4ADE80">[STOP GATE]</text>
+      <text x="110" y="287" fill="#D4D4D4">verifies impact + records canon/mistake</text>
+      <text x="32" y="304" fill="#86EFAC">  └─ .mistology/notes/ committed with PR</text>
+
+      <text x="14" y="324" fill="#22C55E" font-weight="700">RESULT:</text>
+      <text x="64" y="324" fill="#BBF7D0">0 duplicates · 2-hop defended · coherence locked</text>
+    </g>
+
+    <!-- tmux-style Bottom Status Bar -->
+    <path d="M0 342 L450 342 L450 360 Q450 368 442 368 L8 368 Q0 368 0 360 Z" fill="#0B2917"/>
+    <line x1="0" y1="342" x2="450" y2="342" stroke="#166534" stroke-width="1"/>
+    <text x="12" y="359" fill="#4ADE80" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.5" font-weight="700">[SHIELDED]</text>
+    <text x="82" y="359" fill="#D4D4D4" font-family="ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace" font-size="9.5">320 tok · 2/2 coupled caught · auto-enforced</text>
+  </g>
+</svg>

@@ -39,6 +39,12 @@
 <br />
 
 <div align="center">
+  <img src="./assets/before-after-ko.svg" alt="MISTOLOGY 도입 전후 비교 — 무방비 터미널 vs 자동 방어 터미널" width="100%" />
+</div>
+
+<br />
+
+<div align="center">
   <img src="./assets/benchmarks.svg" alt="MISTOLOGY 정량 벤치마크 요약" width="100%" />
 </div>
 
